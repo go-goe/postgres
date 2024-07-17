@@ -204,6 +204,10 @@ func newMigrateTable(tables []any, tableName string) *migrateTable {
 							ma.attribute = fk
 							table.atts[strings.Split(fk.Id, ".")[1]] = ma
 						}
+					case *goe.MigrateOneToOne:
+						ma := new(migrateAttribute)
+						ma.attribute = fk
+						table.atts[strings.Split(fk.Id, ".")[1]] = ma
 					}
 				}
 			}
@@ -265,7 +269,7 @@ func checkTableChanges(mt *migrateTable, tables map[string]*migrateTable, dataMa
 	if len(dts) > 0 {
 		//check fileds
 		for i := range dts {
-			checkFields(dts[i], mt, tables, dataMap, sql)
+			checkFields(conn, dts[i], mt, tables, dataMap, sql)
 		}
 		checkNewFields(mt, dataMap, tables, sql)
 	}
@@ -306,6 +310,18 @@ func createTable(mt *migrateTable, tables map[string]*migrateTable, dataMap map[
 				createTable(tableFk, tables, dataMap, sql)
 				t.createAttrs = append(t.createAttrs, foreingManyToOne(attr, tableFk.pk, dataMap))
 			}
+		case *goe.MigrateOneToOne:
+			tableFk := tables[attr.TargetTable]
+			if tableFk == nil {
+				fmt.Printf("goe: table '%v' not mapped\n", attr.TargetTable)
+				return
+			}
+			if tableFk.migrated {
+				t.createAttrs = append(t.createAttrs, foreingOneToOne(attr, tableFk.pk, dataMap))
+			} else {
+				createTable(tableFk, tables, dataMap, sql)
+				t.createAttrs = append(t.createAttrs, foreingOneToOne(attr, tableFk.pk, dataMap))
+			}
 		}
 	}
 	createTableSql(t.name, t.createPk, t.createAttrs, sql)
@@ -314,6 +330,17 @@ func createTable(mt *migrateTable, tables map[string]*migrateTable, dataMap map[
 func foreingManyToOne(attr *goe.MigrateManyToOne, pk *goe.MigratePk, dataMap map[string]string) string {
 	pk.DataType = checkDataType(pk.DataType, dataMap)
 	return fmt.Sprintf(`"%v" %v %v REFERENCES "%v",`, strings.Split(attr.Id, ".")[1], pk.DataType, func(n bool) string {
+		if n {
+			return "NULL"
+		} else {
+			return "NOT NULL"
+		}
+	}(attr.Nullable), pk.Table)
+}
+
+func foreingOneToOne(attr *goe.MigrateOneToOne, pk *goe.MigratePk, dataMap map[string]string) string {
+	pk.DataType = checkDataType(pk.DataType, dataMap)
+	return fmt.Sprintf(`"%v" %v UNIQUE %v REFERENCES "%v",`, strings.Split(attr.Id, ".")[1], pk.DataType, func(n bool) string {
 		if n {
 			return "NULL"
 		} else {
@@ -331,11 +358,12 @@ type table struct {
 type databaseIndex struct {
 	indexName string
 	unique    bool
+	attname   string
 	table     string
 }
 
 func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.Builder, conn goe.Connection) {
-	sqlQuery := `SELECT DISTINCT ci.relname, i.indisunique as is_unique, c.relname FROM pg_index i
+	sqlQuery := `SELECT DISTINCT ci.relname, i.indisunique as is_unique, c.relname, a.attname FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
 	JOIN pg_class c ON c.oid = i.indrelid
@@ -352,7 +380,7 @@ func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.B
 	dis := make([]databaseIndex, 0)
 	di := databaseIndex{}
 	for rows.Next() {
-		err = rows.Scan(&di.indexName, &di.unique, &di.table)
+		err = rows.Scan(&di.indexName, &di.unique, &di.table, &di.attname)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -391,7 +419,9 @@ func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.B
 	//drop no match index
 	for _, di = range dis {
 		if !slices.Contains(migrateIndexs, di.indexName) {
-			sql.WriteString(fmt.Sprintf(`DROP INDEX IF EXISTS "%v";`, di.indexName) + "\n")
+			if attrs[di.attname] == nil {
+				sql.WriteString(fmt.Sprintf(`DROP INDEX IF EXISTS "%v";`, di.indexName) + "\n")
+			}
 		}
 	}
 
@@ -500,7 +530,7 @@ func createIndexColumns(table, attribute1, attribute2, name string, unique bool,
 	}(attribute1, function), attribute2) + "\n"
 }
 
-func checkFields(databaseTable databaseTable, mt *migrateTable, tables map[string]*migrateTable, dataMap map[string]string, sql *strings.Builder) {
+func checkFields(conn goe.Connection, databaseTable databaseTable, mt *migrateTable, tables map[string]*migrateTable, dataMap map[string]string, sql *strings.Builder) {
 	attrAny := mt.atts[databaseTable.columnName]
 	if attrAny == nil {
 		fmt.Printf(`goe:field "%v" exists on database table but is missed on struct "%v"%v`, databaseTable.columnName, mt.pk.Table, "\n")
@@ -549,11 +579,42 @@ func checkFields(databaseTable databaseTable, mt *migrateTable, tables map[strin
 		attrAny.migrated = true
 		tables[attr.Pk.Table].migrated = true
 	case *goe.MigrateManyToOne:
+		// change from one to one to many to one
+		if c, ok := checkFkUnique(conn, databaseTable.columnName); ok {
+			sql.WriteString(fmt.Sprintf(`ALTER TABLE "%v" DROP CONSTRAINT "%v"`, strings.Split(attr.Id, ".")[0], c) + "\n")
+		}
+		if databaseTable.nullable != attr.Nullable {
+			sql.WriteString(nullableColumn(mt.pk.Table, databaseTable.columnName, attr.Nullable))
+		}
+		attrAny.migrated = true
+	case *goe.MigrateOneToOne:
+		// change from one to one to many to one
+		if _, ok := checkFkUnique(conn, databaseTable.columnName); !ok {
+			c := fmt.Sprintf("%v_%v_key", strings.Split(attr.Id, ".")[0], databaseTable.columnName)
+			sql.WriteString(fmt.Sprintf(`ALTER TABLE "%v" ADD CONSTRAINT "%v" UNIQUE ("%v")`,
+				strings.Split(attr.Id, ".")[0],
+				c,
+				databaseTable.columnName) + "\n")
+		}
 		if databaseTable.nullable != attr.Nullable {
 			sql.WriteString(nullableColumn(mt.pk.Table, databaseTable.columnName, attr.Nullable))
 		}
 		attrAny.migrated = true
 	}
+}
+
+func checkFkUnique(conn goe.Connection, attribute string) (string, bool) {
+	sql := `SELECT DISTINCT ci.relname, i.indisunique as is_unique FROM pg_index i
+	JOIN pg_attribute a ON i.indexrelid = a.attrelid
+	JOIN pg_class ci ON ci.oid = i.indexrelid
+	JOIN pg_class c ON c.oid = i.indrelid
+	where i.indisprimary = false AND a.attname = $1;`
+
+	var b bool
+	var s string
+	row := conn.QueryRowContext(context.Background(), sql, attribute)
+	row.Scan(&s, &b)
+	return s, b
 }
 
 func checkNewFields(mt *migrateTable, dataMap map[string]string, tables map[string]*migrateTable, sql *strings.Builder) {
@@ -571,6 +632,15 @@ func checkNewFields(mt *migrateTable, dataMap map[string]string, tables map[stri
 				table, column, _ := strings.Cut(attr.Id, ".")
 				sql.WriteString(addColumn(table, column, checkDataType(targetTable.pk.DataType, dataMap), attr.Nullable))
 				sql.WriteString(addFkColumn(table, column, attr.TargetTable))
+			case *goe.MigrateOneToOne:
+				targetTable := tables[attr.TargetTable]
+				if targetTable == nil {
+					fmt.Printf(`goe:target struct "%v" it's not mapped on Database struct%v`, attr.TargetTable, "\n")
+					continue
+				}
+				table, column, _ := strings.Cut(attr.Id, ".")
+				sql.WriteString(addColumnUnique(table, column, checkDataType(targetTable.pk.DataType, dataMap), attr.Nullable))
+				sql.WriteString(addFkColumn(table, column, attr.TargetTable))
 			}
 		}
 	}
@@ -578,6 +648,16 @@ func checkNewFields(mt *migrateTable, dataMap map[string]string, tables map[stri
 
 func addColumn(table, column, dataType string, nullable bool) string {
 	return fmt.Sprintf(`ALTER TABLE "%v" ADD COLUMN "%v" %v %v;`, table, column, dataType,
+		func(n bool) string {
+			if n {
+				return "NULL"
+			}
+			return "NOT NULL"
+		}(nullable)) + "\n"
+}
+
+func addColumnUnique(table, column, dataType string, nullable bool) string {
+	return fmt.Sprintf(`ALTER TABLE "%v" ADD COLUMN "%v" %v UNIQUE %v;`, table, column, dataType,
 		func(n bool) string {
 			if n {
 				return "NULL"

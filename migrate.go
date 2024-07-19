@@ -419,9 +419,12 @@ func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.B
 	//drop no match index
 	for _, di = range dis {
 		if !slices.Contains(migrateIndexs, di.indexName) {
-			if attrs[di.attname] == nil {
-				sql.WriteString(fmt.Sprintf(`DROP INDEX IF EXISTS "%v";`, di.indexName) + "\n")
+			if attrs[di.attname] != nil {
+				if _, ok := attrs[di.attname].attribute.(*goe.MigrateOneToOne); ok {
+					continue
+				}
 			}
+			sql.WriteString(fmt.Sprintf(`DROP INDEX IF EXISTS "%v";`, di.indexName) + "\n")
 		}
 	}
 

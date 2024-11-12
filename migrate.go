@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lauro-ss/goe"
+	"github.com/olauro/goe"
 )
 
 type migrateAttribute struct {

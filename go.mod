@@ -1,10 +1,10 @@
-module github.com/lauro-ss/postgres
+module github.com/olauro/postgres
 
 go 1.22.1
 
 require (
 	github.com/jackc/pgx/v5 v5.6.0
-	github.com/lauro-ss/goe v0.2.0
+	github.com/olauro/goe v0.2.0
 )
 
 require (

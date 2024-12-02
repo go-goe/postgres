@@ -586,6 +586,12 @@ func checkFields(conn goe.Connection, databaseTable databaseTable, mt *migrateTa
 		attrAny.migrated = true
 		tables[attr.Pk.Table].migrated = true
 	case *goe.MigrateManyToOne:
+		for _, pk := range mt.pk {
+			//check if pk is many to one
+			if pk.AttributeName == strings.Split(attr.Id, ".")[1] {
+				tables[pk.Table].migrated = true
+			}
+		}
 		// change from one to one to many to one
 		if c, ok := checkFkUnique(conn, databaseTable.columnName); ok {
 			sql.WriteString(fmt.Sprintf(`ALTER TABLE "%v" DROP CONSTRAINT "%v"`, strings.Split(attr.Id, ".")[0], c) + "\n")
@@ -595,6 +601,12 @@ func checkFields(conn goe.Connection, databaseTable databaseTable, mt *migrateTa
 		}
 		attrAny.migrated = true
 	case *goe.MigrateOneToOne:
+		for _, pk := range mt.pk {
+			//check if pk is one to one
+			if pk.AttributeName == strings.Split(attr.Id, ".")[1] {
+				tables[pk.Table].migrated = true
+			}
+		}
 		// change from one to one to many to one
 		if _, ok := checkFkUnique(conn, databaseTable.columnName); !ok {
 			c := fmt.Sprintf("%v_%v_key", strings.Split(attr.Id, ".")[0], databaseTable.columnName)

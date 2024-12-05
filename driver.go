@@ -9,11 +9,15 @@ import (
 )
 
 type Driver struct {
-	dns string
+	dns       string
+	returning []byte
 }
 
 func Open(dns string) (driver *Driver) {
-	return &Driver{dns: dns}
+	return &Driver{
+		dns:       dns,
+		returning: []byte(" RETURNING "),
+	}
 }
 
 func (dr *Driver) Init(db *goe.DB) {
@@ -31,4 +35,8 @@ func (dr *Driver) Init(db *goe.DB) {
 
 func (dr *Driver) KeywordHandler(s string) string {
 	return fmt.Sprintf(`"%s"`, s)
+}
+
+func (dr *Driver) Returning(b []byte) []byte {
+	return append(dr.returning, append(b, ';')...)
 }

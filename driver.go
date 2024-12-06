@@ -10,12 +10,16 @@ import (
 
 type Driver struct {
 	dns       string
+	selectt   []byte
+	from      []byte
 	returning []byte
 }
 
 func Open(dns string) (driver *Driver) {
 	return &Driver{
 		dns:       dns,
+		selectt:   []byte("SELECT "),
+		from:      []byte(" FROM "),
 		returning: []byte(" RETURNING "),
 	}
 }
@@ -35,6 +39,14 @@ func (dr *Driver) Init(db *goe.DB) {
 
 func (dr *Driver) KeywordHandler(s string) string {
 	return fmt.Sprintf(`"%s"`, s)
+}
+
+func (dr *Driver) Select() []byte {
+	return dr.selectt
+}
+
+func (dr *Driver) From() []byte {
+	return dr.from
 }
 
 func (dr *Driver) Returning(b []byte) []byte {

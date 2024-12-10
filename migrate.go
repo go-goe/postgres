@@ -26,7 +26,6 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 	defer conn.Close()
 
 	tables := make(map[string]*migrateTable, 0)
-	tablesManyToMany := make(map[string]*goe.MigrateManyToMany, 0)
 
 	dataMap := map[string]string{
 		"string":    "text",
@@ -47,14 +46,6 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 			if tables[atr.Table] == nil {
 				tables[atr.Table] = newMigrateTable(migrator.Tables, atr.Table)
 			}
-			for _, fkAny := range atr.Fks {
-				switch fk := fkAny.(type) {
-				case *goe.MigrateManyToMany:
-					if tablesManyToMany[fk.Table] == nil {
-						tablesManyToMany[fk.Table] = fk
-					}
-				}
-			}
 		}
 	}
 
@@ -73,16 +64,10 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 		}
 	}
 
-	for _, t := range tablesManyToMany {
-		if table := createManyToManyTable(t, dataMap, conn); table != nil {
-			createTableSql(table.tableName, table.createPks, table.ids, sql)
-		}
-	}
-
 	sql.WriteString(sqlColumns.String())
 
 	//TODO: Add check to drop many to many table
-	dropTables(tables, tablesManyToMany, sql, conn)
+	dropTables(tables, sql, conn)
 
 	if sql.Len() != 0 {
 		fmt.Println(sql)
@@ -92,7 +77,7 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 	}
 }
 
-func dropTables(tables map[string]*migrateTable, tablesManyToMany map[string]*goe.MigrateManyToMany, sql *strings.Builder, conn goe.Connection) {
+func dropTables(tables map[string]*migrateTable, sql *strings.Builder, conn goe.Connection) {
 	databaseTables := make([]string, 0)
 	sqlQuery := `SELECT ic.table_name FROM information_schema.columns ic where ic.table_schema = 'public' group by ic.table_name;`
 	rows, err := conn.QueryContext(context.Background(), sqlQuery)
@@ -121,12 +106,6 @@ func dropTables(tables map[string]*migrateTable, tablesManyToMany map[string]*go
 				break
 			}
 		}
-		for key := range tablesManyToMany {
-			if table == key {
-				ok = true
-				break
-			}
-		}
 		if !ok {
 			var c string
 			fmt.Printf(`goe:do you want to remove table "%v" from database? (y/n):`, table)
@@ -139,12 +118,6 @@ func dropTables(tables map[string]*migrateTable, tablesManyToMany map[string]*go
 
 }
 
-type tableManytoMany struct {
-	tableName string
-	ids       []string
-	createPks string
-}
-
 func createTableSql(create, pks string, attributes []string, sql *strings.Builder) {
 	sql.WriteString(create)
 	for _, a := range attributes {
@@ -152,37 +125,6 @@ func createTableSql(create, pks string, attributes []string, sql *strings.Builde
 	}
 	sql.WriteString(pks)
 	sql.WriteString(");\n")
-}
-
-func createManyToManyTable(mtm *goe.MigrateManyToMany, dataMap map[string]string, conn goe.Connection) *tableManytoMany {
-	sql := `SELECT
-	table_name
-	FROM information_schema.columns WHERE table_name = $1;`
-
-	rows, err := conn.QueryContext(context.Background(), sql, mtm.Table)
-	if err != nil {
-		fmt.Println(err)
-		return nil
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		return nil
-	}
-	return newMigrateTableManyToMany(mtm, dataMap)
-}
-
-func newMigrateTableManyToMany(fk *goe.MigrateManyToMany, dataMap map[string]string) *tableManytoMany {
-	table := new(tableManytoMany)
-	table.tableName = fmt.Sprintf(`CREATE TABLE "%v" (`, fk.Table)
-	table.ids = make([]string, 0, len(fk.Ids))
-	table.createPks = `primary key ("id_flag", "id_flag")`
-	for key, attr := range fk.Ids {
-		attr.DataType = checkDataType(attr.DataType, dataMap)
-		table.ids = append(table.ids, fmt.Sprintf(`"%v" %v NOT NULL REFERENCES "%v",`, attr.AttributeName, attr.DataType, key))
-		table.createPks = strings.Replace(table.createPks, "id_flag", attr.AttributeName, 1)
-	}
-	return table
 }
 
 func newMigrateTable(tables []any, tableName string) *migrateTable {

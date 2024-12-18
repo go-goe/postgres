@@ -41,6 +41,10 @@ func (dr *Driver) KeywordHandler(s string) string {
 	return fmt.Sprintf(`"%s"`, s)
 }
 
+func (dr *Driver) Name() string {
+	return "PostgreSQL"
+}
+
 func (dr *Driver) Select() []byte {
 	return dr.selectt
 }

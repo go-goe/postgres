@@ -141,11 +141,9 @@ func newMigrateTable(tables []any, tableName string) *migrateTable {
 				for _, fkAny := range atr.Fks {
 					switch fk := fkAny.(type) {
 					case *goe.MigrateManyToOne:
-						if !fk.HasMany {
-							ma := new(migrateAttribute)
-							ma.attribute = fk
-							table.atts[strings.Split(fk.Id, ".")[1]] = ma
-						}
+						ma := new(migrateAttribute)
+						ma.attribute = fk
+						table.atts[strings.Split(fk.Id, ".")[1]] = ma
 					case *goe.MigrateOneToOne:
 						ma := new(migrateAttribute)
 						ma.attribute = fk

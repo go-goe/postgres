@@ -217,21 +217,22 @@ func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) strin
 	return fmt.Sprintf("%v %v %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
 		if att.Nullable {
 			return "NULL"
-		} else {
-			return "NOT NULL"
 		}
+		return "NOT NULL"
 	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
 func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string {
 	att.DataType = checkDataType(att.DataType, dataMap)
-	return fmt.Sprintf("%v %v UNIQUE %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
-		if att.Nullable {
-			return "NULL"
-		} else {
+	return fmt.Sprintf("%v %v UNIQUE %v REFERENCES %v(%v),",
+		att.EscapingName,
+		att.DataType,
+		func() string {
+			if att.Nullable {
+				return "NULL"
+			}
 			return "NOT NULL"
-		}
-	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
+		}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
 type table struct {
@@ -307,9 +308,8 @@ func createIndex(index goe.IndexMigrate, table string) string {
 		func() string {
 			if index.Unique {
 				return "UNIQUE INDEX"
-			} else {
-				return "INDEX"
 			}
+			return "INDEX"
 		}(),
 		index.EscapingName,
 		table,
@@ -367,6 +367,9 @@ func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, 
 		if column, exist := dbTable.columns[att.Name]; exist {
 			// change from many to one to one to one
 			if _, unique := checkFkUnique(conn, table.Name, att.Name); !unique {
+				if primaryKeyIsForeignKey(table, att.Name) {
+					continue
+				}
 				c := fmt.Sprintf("%v_%v_key", table.Name, column.columnName)
 				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v UNIQUE (%v)\n",
 					table.EscapingName,
@@ -418,22 +421,22 @@ func checkFkUnique(conn goe.Connection, table, attribute string) (string, bool) 
 
 func addColumn(table, column, dataType string, nullable bool) string {
 	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table, column, dataType,
-		func(n bool) string {
-			if n {
+		func() string {
+			if nullable {
 				return "NULL"
 			}
 			return "NOT NULL"
-		}(nullable))
+		}())
 }
 
 func addColumnUnique(table, column, dataType string, nullable bool) string {
 	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v UNIQUE %v;\n", table, column, dataType,
-		func(n bool) string {
-			if n {
+		func() string {
+			if nullable {
 				return "NULL"
 			}
 			return "NOT NULL"
-		}(nullable))
+		}())
 }
 
 func addFkManyToOne(table *goe.TableMigrate, att goe.ManyToOneMigrate) string {

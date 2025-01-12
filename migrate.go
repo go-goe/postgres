@@ -9,23 +9,8 @@ import (
 	"github.com/olauro/goe"
 )
 
-type migrateAttribute struct {
-	attribute  any
-	migrated   bool
-	index      string
-	indexNames []string
-}
-
-type migrateTable struct {
-	pk       []*goe.MigratePk
-	atts     map[string]*migrateAttribute
-	migrated bool
-}
-
 func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 	defer conn.Close()
-
-	tables := make(map[string]*migrateTable, 0)
 
 	dataMap := map[string]string{
 		"string":    "text",
@@ -40,34 +25,23 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 		"uuid.UUID": "uuid",
 	}
 
-	for _, v := range migrator.Tables {
-		switch atr := v.(type) {
-		case *goe.MigratePk:
-			if tables[atr.Table] == nil {
-				tables[atr.Table] = newMigrateTable(migrator.Tables, atr.Table)
-			}
-		}
-	}
-
 	sql := new(strings.Builder)
 	sqlColumns := new(strings.Builder)
-	for _, t := range tables {
-		checkTableChanges(t, tables, dataMap, sqlColumns, conn)
-		// check for new index
-		checkIndex(t.atts, t.pk[0].Table, sqlColumns, conn)
+
+	for _, t := range migrator.Tables {
+		checkTableChanges(t, dataMap, sql, conn)
+		checkIndex(t.Indexes, t, sqlColumns, conn)
 	}
 
-	// create new tables
-	for _, t := range tables {
-		if !t.migrated {
-			createTable(t, tables, dataMap, sql)
+	for _, t := range migrator.Tables {
+		if !t.Migrated {
+			createTable(t, dataMap, sql, migrator.Tables)
 		}
 	}
 
 	sql.WriteString(sqlColumns.String())
 
-	//TODO: Add check to drop many to many table
-	dropTables(tables, sql, conn)
+	dropTables(migrator.Tables, sql, conn)
 
 	if sql.Len() != 0 {
 		fmt.Println(sql)
@@ -77,8 +51,8 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 	}
 }
 
-func dropTables(tables map[string]*migrateTable, sql *strings.Builder, conn goe.Connection) {
-	databaseTables := make([]string, 0)
+func dropTables(tables map[string]*goe.TableMigrate, sql *strings.Builder, conn goe.Connection) {
+	databaseTables := make([]string, 0, len(tables))
 	sqlQuery := `SELECT ic.table_name FROM information_schema.columns ic where ic.table_schema = 'public' group by ic.table_name;`
 	rows, err := conn.QueryContext(context.Background(), sqlQuery)
 	if err != nil {
@@ -98,24 +72,11 @@ func dropTables(tables map[string]*migrateTable, sql *strings.Builder, conn goe.
 		databaseTables = append(databaseTables, table)
 	}
 
-	for _, table = range databaseTables {
-		ok := false
-		for key := range tables {
-			if table == key {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			var c string
-			fmt.Printf(`goe:do you want to remove table "%v" from database? (y/n):`, table)
-			fmt.Scanln(&c)
-			if c == "y" {
-				sql.WriteString(fmt.Sprintf("DROP TABLE %v;\n", table))
-			}
+	for i := range databaseTables {
+		if t := tables[databaseTables[i]]; t == nil {
+			sql.WriteString(fmt.Sprintf(`DROP TABLE %v;%v`, keywordHandler(databaseTables[i]), "\n"))
 		}
 	}
-
 }
 
 func createTableSql(create, pks string, attributes []string, sql *strings.Builder) {
@@ -127,51 +88,19 @@ func createTableSql(create, pks string, attributes []string, sql *strings.Builde
 	sql.WriteString(");\n")
 }
 
-func newMigrateTable(tables []any, tableName string) *migrateTable {
-	table := new(migrateTable)
-	table.atts = make(map[string]*migrateAttribute)
-	for _, v := range tables {
-		switch atr := v.(type) {
-		case *goe.MigratePk:
-			if atr.Table == tableName {
-				table.pk = append(table.pk, atr)
-				ma := new(migrateAttribute)
-				ma.attribute = atr
-				table.atts[atr.AttributeName] = ma
-				for _, fkAny := range atr.Fks {
-					switch fk := fkAny.(type) {
-					case *goe.MigrateManyToOne:
-						ma := new(migrateAttribute)
-						ma.attribute = fk
-						table.atts[strings.Split(fk.Id, ".")[1]] = ma
-					case *goe.MigrateOneToOne:
-						ma := new(migrateAttribute)
-						ma.attribute = fk
-						table.atts[strings.Split(fk.Id, ".")[1]] = ma
-					}
-				}
-			}
-		case *goe.MigrateAtt:
-			if atr.Pk.Table == tableName {
-				ma := new(migrateAttribute)
-				ma.attribute = atr
-				ma.index = atr.Index
-				table.atts[atr.AttributeName] = ma
-			}
-		}
-	}
-
-	return table
-}
-
-type databaseTable struct {
+type dbColumn struct {
 	columnName   string
 	dataType     string
 	defaultValue *string
 	nullable     bool
+	migrated     bool
 }
 
-func checkTableChanges(mt *migrateTable, tables map[string]*migrateTable, dataMap map[string]string, sql *strings.Builder, conn goe.Connection) {
+type dbTable struct {
+	columns map[string]*dbColumn
+}
+
+func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn goe.Connection) {
 	sqlTableInfos := `SELECT
 	column_name, CASE 
 	WHEN data_type = 'character varying' 
@@ -188,15 +117,15 @@ func checkTableChanges(mt *migrateTable, tables map[string]*migrateTable, dataMa
 	FROM information_schema.columns WHERE table_name = $1;	
 	`
 
-	rows, err := conn.QueryContext(context.Background(), sqlTableInfos, mt.pk[0].Table)
+	rows, err := conn.QueryContext(context.Background(), sqlTableInfos, table.Name)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	defer rows.Close()
 
-	dts := make([]databaseTable, 0)
-	dt := databaseTable{}
+	dts := make(map[string]*dbColumn)
+	dt := dbColumn{}
 	for rows.Next() {
 		err = rows.Scan(&dt.columnName, &dt.dataType, &dt.defaultValue, &dt.nullable)
 		if err != nil {
@@ -204,93 +133,105 @@ func checkTableChanges(mt *migrateTable, tables map[string]*migrateTable, dataMa
 			fmt.Println(err)
 			return
 		}
-		dts = append(dts, dt)
-	}
-	if len(dts) > 0 {
-		//check fileds
-		for i := range dts {
-			checkFields(conn, dts[i], mt, tables, dataMap, sql)
+
+		dts[dt.columnName] = &dbColumn{
+			columnName:   dt.columnName,
+			dataType:     dt.dataType,
+			defaultValue: dt.defaultValue,
+			nullable:     dt.nullable,
 		}
-		checkNewFields(mt, dataMap, tables, sql)
 	}
+	if len(dts) == 0 {
+		return
+	}
+	dbTable := dbTable{columns: dts}
+	table.Migrated = true
+	checkFields(conn, dbTable, table, dataMap, sql)
 }
 
-func createTable(mt *migrateTable, tables map[string]*migrateTable, dataMap map[string]string, sql *strings.Builder) {
+func primaryKeyIsForeignKey(table *goe.TableMigrate, attName string) bool {
+	return slices.ContainsFunc(table.ManyToOnes, func(m goe.ManyToOneMigrate) bool {
+		return m.Name == attName
+	}) || slices.ContainsFunc(table.OneToOnes, func(o goe.OneToOneMigrate) bool {
+		return o.Name == attName
+	})
+}
+
+func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, tables map[string]*goe.TableMigrate) {
 	t := table{}
-	mt.migrated = true
-	t.name = fmt.Sprintf(`CREATE TABLE "%v" (`, mt.pk[0].Table)
-	for _, attrAny := range mt.atts {
-		switch attr := attrAny.attribute.(type) {
-		case *goe.MigratePk:
-			attr.DataType = checkDataType(attr.DataType, dataMap)
-			if attr.AutoIncrement {
-				t.createAttrs = append(t.createAttrs, fmt.Sprintf(`"%v" %v NOT NULL,`, attr.AttributeName, checkTypeAutoIncrement(attr.DataType)))
-			} else {
-				t.createAttrs = append(t.createAttrs, fmt.Sprintf(`"%v" %v NOT NULL,`, attr.AttributeName, attr.DataType))
-			}
-		case *goe.MigrateAtt:
-			attr.DataType = checkDataType(attr.DataType, dataMap)
-			t.createAttrs = append(t.createAttrs, fmt.Sprintf(`"%v" %v %v,`, attr.AttributeName, attr.DataType, func(n bool) string {
-				if n {
-					return "NULL"
-				} else {
-					return "NOT NULL"
-				}
-			}(attr.Nullable)))
-		case *goe.MigrateManyToOne:
-			tableFk := tables[attr.TargetTable]
-			if tableFk == nil {
-				fmt.Printf("goe: table '%v' not mapped\n", attr.TargetTable)
-				return
-			}
-			if tableFk.migrated {
-				t.createAttrs = append(t.createAttrs, foreingManyToOne(attr, tableFk.pk[0], dataMap))
-			} else {
-				createTable(tableFk, tables, dataMap, sql)
-				t.createAttrs = append(t.createAttrs, foreingManyToOne(attr, tableFk.pk[0], dataMap))
-			}
-		case *goe.MigrateOneToOne:
-			tableFk := tables[attr.TargetTable]
-			if tableFk == nil {
-				fmt.Printf("goe: table '%v' not mapped\n", attr.TargetTable)
-				return
-			}
-			if tableFk.migrated {
-				t.createAttrs = append(t.createAttrs, foreingOneToOne(attr, tableFk.pk[0], dataMap))
-			} else {
-				createTable(tableFk, tables, dataMap, sql)
-				t.createAttrs = append(t.createAttrs, foreingOneToOne(attr, tableFk.pk[0], dataMap))
-			}
+	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingName)
+	for _, att := range tbl.PrimaryKeys {
+		if primaryKeyIsForeignKey(tbl, att.Name) {
+			continue
+		}
+		att.DataType = checkDataType(att.DataType, dataMap)
+		if att.AutoIncrement {
+			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, checkTypeAutoIncrement(att.DataType)))
+		} else {
+			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, att.DataType))
 		}
 	}
-	t.createPk = fmt.Sprintf(`primary key ("%v"`, mt.pk[0].AttributeName)
-	for _, pk := range mt.pk[1:] {
-		t.createPk += fmt.Sprintf(`,"%v"`, pk.AttributeName)
+
+	for _, att := range tbl.Attributes {
+		att.DataType = checkDataType(att.DataType, dataMap)
+		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v,", att.EscapingName, att.DataType, func() string {
+			if att.Nullable {
+				return "NULL"
+			} else {
+				return "NOT NULL"
+			}
+		}()))
+	}
+
+	for _, att := range tbl.OneToOnes {
+		tb := tables[att.TargetTable]
+		if tb.Migrated {
+			t.createAttrs = append(t.createAttrs, foreingOneToOne(att, dataMap))
+		} else {
+			createTable(tb, dataMap, sql, tables)
+			t.createAttrs = append(t.createAttrs, foreingOneToOne(att, dataMap))
+		}
+	}
+
+	for _, att := range tbl.ManyToOnes {
+		tb := tables[att.TargetTable]
+		if tb.Migrated {
+			t.createAttrs = append(t.createAttrs, foreingManyToOne(att, dataMap))
+		} else {
+			createTable(tb, dataMap, sql, tables)
+			t.createAttrs = append(t.createAttrs, foreingManyToOne(att, dataMap))
+		}
+	}
+
+	tbl.Migrated = true
+	t.createPk = fmt.Sprintf("primary key (%v", tbl.PrimaryKeys[0].EscapingName)
+	for _, pk := range tbl.PrimaryKeys[1:] {
+		t.createPk += fmt.Sprintf(",%v", pk.EscapingName)
 	}
 	t.createPk += ")"
 	createTableSql(t.name, t.createPk, t.createAttrs, sql)
 }
 
-func foreingManyToOne(attr *goe.MigrateManyToOne, pk *goe.MigratePk, dataMap map[string]string) string {
-	pk.DataType = checkDataType(pk.DataType, dataMap)
-	return fmt.Sprintf(`"%v" %v %v REFERENCES "%v"("%v"),`, strings.Split(attr.Id, ".")[1], pk.DataType, func(n bool) string {
-		if n {
+func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) string {
+	att.DataType = checkDataType(att.DataType, dataMap)
+	return fmt.Sprintf("%v %v %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
+		if att.Nullable {
 			return "NULL"
 		} else {
 			return "NOT NULL"
 		}
-	}(attr.Nullable), pk.Table, attr.TargetColumn)
+	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
-func foreingOneToOne(attr *goe.MigrateOneToOne, pk *goe.MigratePk, dataMap map[string]string) string {
-	pk.DataType = checkDataType(pk.DataType, dataMap)
-	return fmt.Sprintf(`"%v" %v UNIQUE %v REFERENCES "%v"("%v"),`, strings.Split(attr.Id, ".")[1], pk.DataType, func(n bool) string {
-		if n {
+func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string {
+	att.DataType = checkDataType(att.DataType, dataMap)
+	return fmt.Sprintf("%v %v UNIQUE %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
+		if att.Nullable {
 			return "NULL"
 		} else {
 			return "NOT NULL"
 		}
-	}(attr.Nullable), pk.Table, attr.TargetColumn)
+	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
 type table struct {
@@ -304,9 +245,10 @@ type databaseIndex struct {
 	unique    bool
 	attname   string
 	table     string
+	migrated  bool
 }
 
-func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.Builder, conn goe.Connection) {
+func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn goe.Connection) {
 	sqlQuery := `SELECT DISTINCT ci.relname, i.indisunique as is_unique, c.relname, a.attname FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
@@ -314,14 +256,14 @@ func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.B
 	where i.indisprimary = false AND c.relname = $1;
 	`
 
-	rows, err := conn.QueryContext(context.Background(), sqlQuery, table)
+	rows, err := conn.QueryContext(context.Background(), sqlQuery, table.Name)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	defer rows.Close()
 
-	dis := make([]databaseIndex, 0)
+	dis := make(map[string]*databaseIndex)
 	di := databaseIndex{}
 	for rows.Next() {
 		err = rows.Scan(&di.indexName, &di.unique, &di.table, &di.attname)
@@ -329,305 +271,189 @@ func checkIndex(attrs map[string]*migrateAttribute, table string, sql *strings.B
 			fmt.Println(err)
 			return
 		}
-		dis = append(dis, di)
-	}
-
-	migrateIndexs := make([]string, 0)
-	for _, di = range dis {
-		for _, v := range attrs {
-			switch attr := v.attribute.(type) {
-			case *goe.MigrateAtt:
-				if attr.Index != "" {
-					indexs := strings.Split(attr.Index, ",")
-					for _, index := range indexs {
-						n := fmt.Sprintf("%v_%v", di.table, getIndexValue(index, "n:"))
-						if di.indexName == n {
-							if slices.Contains(migrateIndexs, di.indexName) {
-								v.indexNames = append(v.indexNames, di.indexName)
-								continue
-							}
-							migrateIndexs = append(migrateIndexs, di.indexName)
-							//drop index if uniquenes changes
-							if di.unique != strings.Contains(index, "unique") {
-								sql.WriteString(fmt.Sprintf(`DROP INDEX IF EXISTS "%v";`, di.indexName) + "\n")
-								continue
-							}
-							v.indexNames = append(v.indexNames, di.indexName)
-						}
-					}
-				}
-			}
+		dis[di.indexName] = &databaseIndex{
+			indexName: di.indexName,
+			unique:    di.unique,
+			attname:   di.attname,
+			table:     di.table,
 		}
 	}
 
-	//drop no match index
-	for _, di = range dis {
-		if !slices.Contains(migrateIndexs, di.indexName) {
-			if attrs[di.attname] != nil {
-				if _, ok := attrs[di.attname].attribute.(*goe.MigrateOneToOne); ok {
-					continue
-				}
+	for i := range indexes {
+		if dbIndex, exist := dis[indexes[i].Name]; exist {
+			if indexes[i].Unique != dbIndex.unique {
+				sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
+				sql.WriteString(createIndex(indexes[i], table.EscapingName))
 			}
-			sql.WriteString(fmt.Sprintf(`DROP INDEX IF EXISTS "%v";`, di.indexName) + "\n")
+			dbIndex.migrated = true
+			continue
 		}
+		sql.WriteString(createIndex(indexes[i], table.EscapingName))
 	}
 
-	checkNewIndexs(attrs, sql)
-}
-
-func checkNewIndexs(attrs map[string]*migrateAttribute, sql *strings.Builder) {
-	created := make([]string, 0, len(attrs))
-	for _, v := range attrs {
-		if v.index != "" {
-			switch attr := v.attribute.(type) {
-			case *goe.MigrateAtt:
-				indexs := strings.Split(attr.Index, ",")
-				for _, index := range indexs {
-					n := getIndexValue(index, "n:")
-					if n == "" {
-						fmt.Printf(`error: index "%v" without declared name on struct "%v" attribute "%v". to fix add tag "n:"%v`, index, attr.Pk.Table, attr.AttributeName, "\n")
-						continue
-					}
-					n = fmt.Sprintf("%v_%v", attr.Pk.Table, n)
-					// chefk if index already exists on database
-					if slices.Contains(v.indexNames, n) {
-						continue
-					}
-					// skips created indexs
-					if slices.Contains(created, n) {
-						continue
-					}
-					unique := strings.Contains(index, "unique")
-					created = append(created, n)
-					f := getIndexValue(index, "f:")
-					if c := checkColumnIndex(n, attr.AttributeName, attr.Pk.Table, attrs, unique); c != "" {
-						sql.WriteString(createIndexColumns(attr.Pk.Table, attr.AttributeName, c, n, unique, f))
-						continue
-					}
-					sql.WriteString(createIndex(attr.Pk.Table, n, attr.AttributeName, unique, f))
-				}
+	for _, dbIndex := range dis {
+		if !dbIndex.migrated {
+			if !slices.ContainsFunc(table.OneToOnes, func(o goe.OneToOneMigrate) bool {
+				return o.Name == dbIndex.attname
+			}) {
+				sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", keywordHandler(dbIndex.indexName)) + "\n")
 			}
 		}
 	}
 }
 
-func checkColumnIndex(indexName, attrName, table string, attrs map[string]*migrateAttribute, unique bool) string {
-	for _, v := range attrs {
-		if v.index != "" {
-			switch attr := v.attribute.(type) {
-			case *goe.MigrateAtt:
-				indexs := strings.Split(attr.Index, ",")
-				for _, i := range indexs {
-					if attr.AttributeName != attrName && strings.Contains(i, "unique") == unique && indexName == fmt.Sprintf("%v_%v", table, getIndexValue(i, "n:")) {
-						if f := getIndexValue(i, "f:"); f != "" {
-							f := fmt.Sprintf(`%v("%v")`, f, attr.AttributeName)
-							return f
-						}
-						return attr.AttributeName
-					}
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func getIndexValue(valueTag string, tag string) string {
-	values := strings.Split(valueTag, " ")
-	for _, v := range values {
-		if _, value, ok := strings.Cut(v, tag); ok {
-			return value
-		}
-	}
-	return ""
-}
-
-func createIndex(table, name, attribute string, unique bool, function string) string {
-	return fmt.Sprintf(`CREATE %v "%v" ON "%v" (%v);`,
-		func(u bool) string {
-			if unique {
+func createIndex(index goe.IndexMigrate, table string) string {
+	return fmt.Sprintf("CREATE %v %v ON %v (%v);\n",
+		func() string {
+			if index.Unique {
 				return "UNIQUE INDEX"
 			} else {
 				return "INDEX"
 			}
-		}(unique),
-		name,
+		}(),
+		index.EscapingName,
 		table,
-		func(a, f string) string {
-			if f != "" {
-				return fmt.Sprintf(`%v("%v")`, f, a)
+		func() string {
+			s := fmt.Sprintf("%v", index.Attributes[0].EscapingName)
+			for _, a := range index.Attributes[1:] {
+				s += fmt.Sprintf(",%v", a.EscapingName)
 			}
-			return fmt.Sprintf(`"%s"`, a)
-		}(attribute, function),
-	) + "\n"
+			return s
+		}(),
+	)
 }
 
-func createIndexColumns(table, attribute1, attribute2, name string, unique bool, function string) string {
-	return fmt.Sprintf(`CREATE %v "%v" ON "%v" (%v,%v);`, func(u bool) string {
-		if unique {
-			return "UNIQUE INDEX"
-		} else {
-			return "INDEX"
-		}
-	}(unique), name, table, func(a, f string) string {
-		if f != "" {
-			return fmt.Sprintf(`%v("%v")`, f, a)
-		}
-		return a
-	}(attribute1, function), attribute2) + "\n"
-}
-
-func checkFields(conn goe.Connection, databaseTable databaseTable, mt *migrateTable, tables map[string]*migrateTable, dataMap map[string]string, sql *strings.Builder) {
-	attrAny := mt.atts[databaseTable.columnName]
-	if attrAny == nil {
-		fmt.Printf(`goe:field "%v" exists on database table but is missed on struct "%v"%v`, databaseTable.columnName, mt.pk[0].Table, "\n")
-		fmt.Printf(`goe:do you renamed the field "%v" on "%v"? (write new name or leave empty if not):`, databaseTable.columnName, mt.pk[0].Table)
-		var c string
-		fmt.Scanln(&c)
-		if c == "" {
-			fmt.Printf(`goe:do you want to remove the field "%v" on table "%v"? (y/n):`, databaseTable.columnName, mt.pk[0].Table)
-			fmt.Scanln(&c)
-			if c == "y" {
-				sql.WriteString(dropColumn(mt.pk[0].Table, databaseTable.columnName))
+func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder) {
+	for _, att := range table.PrimaryKeys {
+		if column := dbTable.columns[att.Name]; column != nil {
+			if primaryKeyIsForeignKey(table, att.Name) {
+				continue
 			}
-			return
+
+			dataType := checkDataType(att.DataType, dataMap)
+			if att.AutoIncrement {
+				dataType = checkTypeAutoIncrement(dataType)
+			}
+			if column.dataType != dataType {
+				if att.AutoIncrement {
+					sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, fmt.Sprintf("%v USING %v::%v", checkTypeAutoIncrement(dataType), att.EscapingName, checkTypeAutoIncrement(dataType)), dataMap))
+					sql.WriteString(fmt.Sprintf("CREATE SEQUENCE %v_%v_seq OWNED BY %v.%v;\n", table.Name, att.Name, table.Name, att.Name))
+					sql.WriteString(alterColumnDefault(table.EscapingName, att.EscapingName, fmt.Sprintf("nextval('%v_%v_seq'::regclass)", table.Name, att.Name)))
+				} else {
+					sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, dataType, dataMap))
+				}
+			}
+			column.migrated = true
+			continue
 		}
-		if mt.atts[c] != nil {
-			sql.WriteString(renameColumn(mt.pk[0].Table, databaseTable.columnName, mt.atts[c].attribute.(*goe.MigrateAtt).AttributeName))
-			mt.atts[c].migrated = true
-		}
-		return
 	}
-	switch attr := attrAny.attribute.(type) {
-	case *goe.MigratePk:
-		dataType := checkDataType(attr.DataType, dataMap)
-		if attr.AutoIncrement {
-			dataType = checkTypeAutoIncrement(dataType)
-		}
-		if databaseTable.dataType != dataType {
-			if attr.AutoIncrement {
-				sql.WriteString(alterColumn(attr.Table, databaseTable.columnName, fmt.Sprintf(`%v USING "%v"::%v`, checkTypeAutoIncrement(dataType), attr.AttributeName, checkTypeAutoIncrement(dataType)), dataMap))
-				sql.WriteString(fmt.Sprintf("CREATE SEQUENCE %v_%v_seq OWNED BY %v.%v;\n", attr.Table, attr.AttributeName, attr.Table, attr.AttributeName))
-				sql.WriteString(alterColumnDefault(attr.Table, attr.AttributeName, fmt.Sprintf("nextval('%v_%v_seq'::regclass)", attr.Table, attr.AttributeName)))
-			} else {
-				sql.WriteString(alterColumn(attr.Table, databaseTable.columnName, dataType, dataMap))
+
+	for _, att := range table.Attributes {
+		if column, exist := dbTable.columns[att.Name]; exist {
+			dataType := checkDataType(att.DataType, dataMap)
+			if column.dataType != dataType {
+				sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, dataType, dataMap))
 			}
-		}
-		attrAny.migrated = true
-		tables[attr.Table].migrated = true
-	case *goe.MigrateAtt:
-		dataType := checkDataType(attr.DataType, dataMap)
-		if databaseTable.dataType != dataType {
-			sql.WriteString(alterColumn(attr.Pk.Table, databaseTable.columnName, dataType, dataMap))
-		}
-		if databaseTable.nullable != attr.Nullable {
-			sql.WriteString(nullableColumn(attr.Pk.Table, attr.AttributeName, attr.Nullable))
-		}
-		attrAny.migrated = true
-		tables[attr.Pk.Table].migrated = true
-	case *goe.MigrateManyToOne:
-		for _, pk := range mt.pk {
-			//check if pk is many to one
-			if pk.AttributeName == strings.Split(attr.Id, ".")[1] {
-				tables[pk.Table].migrated = true
+			if column.nullable != att.Nullable {
+				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
 			}
+			column.migrated = true
+			continue
 		}
-		// change from one to one to many to one
-		if c, ok := checkFkUnique(conn, databaseTable.columnName); ok {
-			sql.WriteString(fmt.Sprintf(`ALTER TABLE "%v" DROP CONSTRAINT "%v"`, strings.Split(attr.Id, ".")[0], c) + "\n")
-		}
-		if databaseTable.nullable != attr.Nullable {
-			sql.WriteString(nullableColumn(mt.pk[0].Table, databaseTable.columnName, attr.Nullable))
-		}
-		attrAny.migrated = true
-	case *goe.MigrateOneToOne:
-		for _, pk := range mt.pk {
-			//check if pk is one to one
-			if pk.AttributeName == strings.Split(attr.Id, ".")[1] {
-				tables[pk.Table].migrated = true
-			}
-		}
-		// change from one to one to many to one
-		if _, ok := checkFkUnique(conn, databaseTable.columnName); !ok {
-			c := fmt.Sprintf("%v_%v_key", strings.Split(attr.Id, ".")[0], databaseTable.columnName)
-			sql.WriteString(fmt.Sprintf(`ALTER TABLE "%v" ADD CONSTRAINT "%v" UNIQUE ("%v")`,
-				strings.Split(attr.Id, ".")[0],
-				c,
-				databaseTable.columnName) + "\n")
-		}
-		if databaseTable.nullable != attr.Nullable {
-			sql.WriteString(nullableColumn(mt.pk[0].Table, databaseTable.columnName, attr.Nullable))
-		}
-		attrAny.migrated = true
+		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
 	}
+
+	for _, att := range table.OneToOnes {
+		if column, exist := dbTable.columns[att.Name]; exist {
+			// change from many to one to one to one
+			if _, unique := checkFkUnique(conn, table.Name, att.Name); !unique {
+				c := fmt.Sprintf("%v_%v_key", table.Name, column.columnName)
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v UNIQUE (%v)\n",
+					table.EscapingName,
+					keywordHandler(c),
+					att.EscapingName))
+			}
+			if column.nullable != att.Nullable {
+				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
+			}
+			column.migrated = true
+			continue
+		}
+		sql.WriteString(addColumnUnique(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		sql.WriteString(addFkOneToOne(table, att))
+	}
+
+	for _, att := range table.ManyToOnes {
+		if column, exist := dbTable.columns[att.Name]; exist {
+			// change from one to one to many to one
+			if c, unique := checkFkUnique(conn, table.Name, att.Name); unique {
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v DROP CONSTRAINT %v\n", table.EscapingName, keywordHandler(c)))
+			}
+			if column.nullable != att.Nullable {
+				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
+			}
+			column.migrated = true
+			continue
+		}
+		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		sql.WriteString(addFkManyToOne(table, att))
+	}
+	//TODO: Rename by pattern
+	//TODO: Drop columns by pattern
 }
 
-func checkFkUnique(conn goe.Connection, attribute string) (string, bool) {
-	sql := `SELECT DISTINCT ci.relname, i.indisunique as is_unique FROM pg_index i
+func checkFkUnique(conn goe.Connection, table, attribute string) (string, bool) {
+	sql := `SELECT ci.relname, i.indisunique as is_unique FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
 	JOIN pg_class c ON c.oid = i.indrelid
-	where i.indisprimary = false AND a.attname = $1;`
+	where i.indisprimary = false AND c.relname = $1 AND a.attname = $2;`
 
 	var b bool
 	var s string
-	row := conn.QueryRowContext(context.Background(), sql, attribute)
+	row := conn.QueryRowContext(context.Background(), sql, table, attribute)
 	row.Scan(&s, &b)
 	return s, b
 }
 
-func checkNewFields(mt *migrateTable, dataMap map[string]string, tables map[string]*migrateTable, sql *strings.Builder) {
-	for _, v := range mt.atts {
-		if !v.migrated {
-			//TODO: check this mapping
-			switch attr := v.attribute.(type) {
-			case *goe.MigrateAtt:
-				sql.WriteString(addColumn(mt.pk[0].Table, attr.AttributeName, checkDataType(attr.DataType, dataMap), attr.Nullable))
-			case *goe.MigrateManyToOne:
-				targetTable := tables[attr.TargetTable]
-				if targetTable == nil {
-					fmt.Printf(`goe:target struct "%v" it's not mapped on Database struct%v`, attr.TargetTable, "\n")
-					continue
-				}
-				table, column, _ := strings.Cut(attr.Id, ".")
-				sql.WriteString(addColumn(table, column, checkDataType(targetTable.pk[0].DataType, dataMap), attr.Nullable))
-				sql.WriteString(addFkColumn(table, column, attr.TargetTable))
-			case *goe.MigrateOneToOne:
-				targetTable := tables[attr.TargetTable]
-				if targetTable == nil {
-					fmt.Printf(`goe:target struct "%v" it's not mapped on Database struct%v`, attr.TargetTable, "\n")
-					continue
-				}
-				table, column, _ := strings.Cut(attr.Id, ".")
-				sql.WriteString(addColumnUnique(table, column, checkDataType(targetTable.pk[0].DataType, dataMap), attr.Nullable))
-				sql.WriteString(addFkColumn(table, column, attr.TargetTable))
-			}
-		}
-	}
-}
-
 func addColumn(table, column, dataType string, nullable bool) string {
-	return fmt.Sprintf(`ALTER TABLE "%v" ADD COLUMN "%v" %v %v;`, table, column, dataType,
+	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table, column, dataType,
 		func(n bool) string {
 			if n {
 				return "NULL"
 			}
 			return "NOT NULL"
-		}(nullable)) + "\n"
+		}(nullable))
 }
 
 func addColumnUnique(table, column, dataType string, nullable bool) string {
-	return fmt.Sprintf(`ALTER TABLE "%v" ADD COLUMN "%v" %v UNIQUE %v;`, table, column, dataType,
+	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v UNIQUE %v;\n", table, column, dataType,
 		func(n bool) string {
 			if n {
 				return "NULL"
 			}
 			return "NOT NULL"
-		}(nullable)) + "\n"
+		}(nullable))
 }
 
-func addFkColumn(table, column, targetTable string) string {
-	return fmt.Sprintf(`ALTER TABLE "%v" ADD CONSTRAINT %v FOREIGN KEY ("%v") REFERENCES "%v";`, table, fmt.Sprintf("fk_%v_%v", targetTable, column), column, targetTable) + "\n"
+func addFkManyToOne(table *goe.TableMigrate, att goe.ManyToOneMigrate) string {
+	c := keywordHandler(fmt.Sprintf("fk_%v_%v", table.Name, att.Name))
+	return fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v FOREIGN KEY (%v) REFERENCES %v (%v);\n",
+		table.EscapingName,
+		c,
+		att.EscapingName,
+		att.EscapingTargetTable,
+		att.EscapingTargetColumn)
+}
+
+func addFkOneToOne(table *goe.TableMigrate, att goe.OneToOneMigrate) string {
+	c := keywordHandler(fmt.Sprintf("fk_%v_%v", table.Name, att.Name))
+	return fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v FOREIGN KEY (%v) REFERENCES %v (%v);\n",
+		table.EscapingName,
+		c,
+		att.EscapingName,
+		att.EscapingTargetTable,
+		att.EscapingTargetColumn)
 }
 
 func checkDataType(structDataType string, dataMap map[string]string) string {
@@ -658,26 +484,26 @@ func checkTypeAutoIncrement(structDataType string) string {
 
 func alterColumn(table, column, dataType string, dataMap map[string]string) string {
 	if dataMap[dataType] == "" {
-		return fmt.Sprintf(`ALTER TABLE "%v" ALTER COLUMN "%v" TYPE %v;`, table, column, dataType) + "\n"
+		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v TYPE %v;\n", table, column, dataType)
 	}
-	return fmt.Sprintf(`ALTER TABLE "%v" ALTER COLUMN "%v" TYPE %v;`, table, column, dataMap[dataType]) + "\n"
+	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v TYPE %v;\n", table, column, dataMap[dataType])
 }
 
 func alterColumnDefault(table, column, defa string) string {
-	return fmt.Sprintf(`ALTER TABLE "%v" ALTER COLUMN "%v" SET DEFAULT %v;`, table, column, defa) + "\n"
+	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;\n", table, column, defa)
 }
 
 func nullableColumn(table, columnName string, nullable bool) string {
 	if nullable {
-		return fmt.Sprintf(`ALTER TABLE "%v" ALTER COLUMN "%v" DROP NOT NULL;`, table, columnName) + "\n"
+		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP NOT NULL;\n", table, columnName)
 	}
-	return fmt.Sprintf(`ALTER TABLE "%v" ALTER COLUMN "%v" SET NOT NULL;`, table, columnName) + "\n"
+	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET NOT NULL;\n", table, columnName)
 }
 
 func renameColumn(table, oldColumnName, newColumnName string) string {
-	return fmt.Sprintf(`ALTER TABLE "%v" RENAME COLUMN "%v" TO "%v";`, table, oldColumnName, newColumnName) + "\n"
+	return fmt.Sprintf("ALTER TABLE %v RENAME COLUMN %v TO %v;\n", table, oldColumnName, newColumnName)
 }
 
 func dropColumn(table, columnName string) string {
-	return fmt.Sprintf(`ALTER TABLE "%v" DROP COLUMN "%v";`, table, columnName) + "\n"
+	return fmt.Sprintf("ALTER TABLE %v DROP COLUMN %v;", table, columnName)
 }

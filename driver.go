@@ -38,6 +38,10 @@ func (dr *Driver) Init(db *goe.DB) {
 }
 
 func (dr *Driver) KeywordHandler(s string) string {
+	return keywordHandler(s)
+}
+
+func keywordHandler(s string) string {
 	return fmt.Sprintf(`"%s"`, s)
 }
 

@@ -9,9 +9,7 @@ import (
 	"github.com/olauro/goe"
 )
 
-func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
-	defer conn.Close()
-
+func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator, conn goe.Connection) (string, error) {
 	dataMap := map[string]string{
 		"string":    "text",
 		"int16":     "smallint",
@@ -41,42 +39,40 @@ func (db *Driver) Migrate(migrator *goe.Migrator, conn goe.Connection) {
 
 	sql.WriteString(sqlColumns.String())
 
-	dropTables(migrator.Tables, sql, conn)
-
+	var sqlString string
 	if sql.Len() != 0 {
-		fmt.Println(sql)
-		if _, err := conn.ExecContext(context.Background(), sql.String()); err != nil {
-			fmt.Println(err)
+		sqlString = sql.String()
+		if _, err := conn.ExecContext(ctx, sql.String()); err != nil {
+			return sqlString, err
 		}
 	}
+	return sqlString, nil
 }
 
-func dropTables(tables map[string]*goe.TableMigrate, sql *strings.Builder, conn goe.Connection) {
-	databaseTables := make([]string, 0, len(tables))
-	sqlQuery := `SELECT ic.table_name FROM information_schema.columns ic where ic.table_schema = 'public' group by ic.table_name;`
-	rows, err := conn.QueryContext(context.Background(), sqlQuery)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer rows.Close()
+func (db *Driver) DropTable(table string, conn goe.Connection) (string, error) {
+	sql := fmt.Sprintf("DROP TABLE IF EXISTS %v;", table)
+	_, err := conn.ExecContext(context.Background(), sql)
+	return sql, err
+}
 
-	var table string
+func (db *Driver) RenameColumn(table, oldColumn, newColumn string, conn goe.Connection) (string, error) {
+	sql := renameColumn(table, oldColumn, newColumn)
+	_, err := conn.ExecContext(context.Background(), sql)
+	return sql, err
+}
 
-	for rows.Next() {
-		err = rows.Scan(&table)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		databaseTables = append(databaseTables, table)
-	}
+func (db *Driver) DropColumn(table, column string, conn goe.Connection) (string, error) {
+	sql := dropColumn(table, column)
+	_, err := conn.ExecContext(context.Background(), sql)
+	return sql, err
+}
 
-	for i := range databaseTables {
-		if t := tables[databaseTables[i]]; t == nil {
-			sql.WriteString(fmt.Sprintf(`DROP TABLE %v;%v`, keywordHandler(databaseTables[i]), "\n"))
-		}
-	}
+func renameColumn(table, oldColumnName, newColumnName string) string {
+	return fmt.Sprintf("ALTER TABLE %v RENAME COLUMN %v TO %v;\n", table, oldColumnName, newColumnName)
+}
+
+func dropColumn(table, columnName string) string {
+	return fmt.Sprintf("ALTER TABLE %v DROP COLUMN %v;\n", table, columnName)
 }
 
 func createTableSql(create, pks string, attributes []string, sql *strings.Builder) {
@@ -93,7 +89,6 @@ type dbColumn struct {
 	dataType     string
 	defaultValue *string
 	nullable     bool
-	migrated     bool
 }
 
 type dbTable struct {
@@ -343,8 +338,6 @@ func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, 
 					sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, dataType, dataMap))
 				}
 			}
-			column.migrated = true
-			continue
 		}
 	}
 
@@ -357,7 +350,6 @@ func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, 
 			if column.nullable != att.Nullable {
 				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
 			}
-			column.migrated = true
 			continue
 		}
 		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
@@ -379,7 +371,6 @@ func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, 
 			if column.nullable != att.Nullable {
 				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
 			}
-			column.migrated = true
 			continue
 		}
 		sql.WriteString(addColumnUnique(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
@@ -395,14 +386,11 @@ func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, 
 			if column.nullable != att.Nullable {
 				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
 			}
-			column.migrated = true
 			continue
 		}
 		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
 		sql.WriteString(addFkManyToOne(table, att))
 	}
-	//TODO: Rename by pattern
-	//TODO: Drop columns by pattern
 }
 
 func checkFkUnique(conn goe.Connection, table, attribute string) (string, bool) {
@@ -501,12 +489,4 @@ func nullableColumn(table, columnName string, nullable bool) string {
 		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP NOT NULL;\n", table, columnName)
 	}
 	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET NOT NULL;\n", table, columnName)
-}
-
-func renameColumn(table, oldColumnName, newColumnName string) string {
-	return fmt.Sprintf("ALTER TABLE %v RENAME COLUMN %v TO %v;\n", table, oldColumnName, newColumnName)
-}
-
-func dropColumn(table, columnName string) string {
-	return fmt.Sprintf("ALTER TABLE %v DROP COLUMN %v;", table, columnName)
 }

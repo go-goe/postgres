@@ -25,7 +25,7 @@ func Open(dns string) (driver *Driver) {
 }
 
 func (dr *Driver) Init(db *goe.DB) {
-	if db.ConnPool != nil {
+	if db.SqlDB != nil {
 		return
 	}
 	config, err := pgx.ParseConfig(dr.dns)
@@ -34,7 +34,7 @@ func (dr *Driver) Init(db *goe.DB) {
 		fmt.Println(err)
 		return
 	}
-	db.ConnPool = stdlib.OpenDB(*config)
+	db.SqlDB = stdlib.OpenDB(*config)
 }
 
 func (dr *Driver) KeywordHandler(s string) string {

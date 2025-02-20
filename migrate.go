@@ -42,7 +42,7 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator, co
 	var sqlString string
 	if sql.Len() != 0 {
 		sqlString = sql.String()
-		if _, err := conn.ExecContext(ctx, sql.String()); err != nil {
+		if err := conn.ExecContext(ctx, sql.String()); err != nil {
 			return sqlString, err
 		}
 	}
@@ -51,19 +51,19 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator, co
 
 func (db *Driver) DropTable(table string, conn goe.Connection) (string, error) {
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %v;", table)
-	_, err := conn.ExecContext(context.Background(), sql)
+	err := conn.ExecContext(context.Background(), sql)
 	return sql, err
 }
 
 func (db *Driver) RenameColumn(table, oldColumn, newColumn string, conn goe.Connection) (string, error) {
 	sql := renameColumn(table, oldColumn, newColumn)
-	_, err := conn.ExecContext(context.Background(), sql)
+	err := conn.ExecContext(context.Background(), sql)
 	return sql, err
 }
 
 func (db *Driver) DropColumn(table, column string, conn goe.Connection) (string, error) {
 	sql := dropColumn(table, column)
-	_, err := conn.ExecContext(context.Background(), sql)
+	err := conn.ExecContext(context.Background(), sql)
 	return sql, err
 }
 

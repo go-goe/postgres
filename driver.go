@@ -109,8 +109,9 @@ type Connection struct {
 	sql *sql.DB
 }
 
-func (c Connection) QueryContext(ctx context.Context, query string, args ...any) (goe.Rows, error) {
-	rows, err := c.sql.QueryContext(ctx, query, args...)
+func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
+	sql, args := buildSql(query)
+	rows, err := c.sql.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -118,14 +119,16 @@ func (c Connection) QueryContext(ctx context.Context, query string, args ...any)
 	return Rows{rows: rows}, nil
 }
 
-func (c Connection) QueryRowContext(ctx context.Context, query string, args ...any) goe.Row {
-	row := c.sql.QueryRowContext(ctx, query, args...)
+func (c Connection) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
+	sql, args := buildSql(query)
+	row := c.sql.QueryRowContext(ctx, sql, args...)
 
 	return Row{row: row}
 }
 
-func (c Connection) ExecContext(ctx context.Context, query string, args ...any) error {
-	_, err := c.sql.ExecContext(ctx, query, args...)
+func (c Connection) ExecContext(ctx context.Context, query goe.Query) error {
+	sql, args := buildSql(query)
+	_, err := c.sql.ExecContext(ctx, sql, args...)
 
 	return err
 }
@@ -142,8 +145,9 @@ type Transaction struct {
 	tx *sql.Tx
 }
 
-func (t Transaction) QueryContext(ctx context.Context, query string, args ...any) (goe.Rows, error) {
-	rows, err := t.tx.QueryContext(ctx, query, args...)
+func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
+	sql, args := buildSql(query)
+	rows, err := t.tx.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -151,14 +155,16 @@ func (t Transaction) QueryContext(ctx context.Context, query string, args ...any
 	return Rows{rows: rows}, nil
 }
 
-func (t Transaction) QueryRowContext(ctx context.Context, query string, args ...any) goe.Row {
-	row := t.tx.QueryRowContext(ctx, query, args...)
+func (t Transaction) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
+	sql, args := buildSql(query)
+	row := t.tx.QueryRowContext(ctx, sql, args...)
 
 	return Row{row: row}
 }
 
-func (t Transaction) ExecContext(ctx context.Context, query string, args ...any) error {
-	_, err := t.tx.ExecContext(ctx, query, args...)
+func (t Transaction) ExecContext(ctx context.Context, query goe.Query) error {
+	sql, args := buildSql(query)
+	_, err := t.tx.ExecContext(ctx, sql, args...)
 
 	return err
 }

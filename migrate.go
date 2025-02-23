@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,7 +10,7 @@ import (
 	"github.com/olauro/goe"
 )
 
-func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator, conn goe.Connection) (string, error) {
+func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) (string, error) {
 	dataMap := map[string]string{
 		"string":    "text",
 		"int16":     "smallint",
@@ -27,8 +28,8 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator, co
 	sqlColumns := new(strings.Builder)
 
 	for _, t := range migrator.Tables {
-		checkTableChanges(t, dataMap, sql, conn)
-		checkIndex(t.Indexes, t, sqlColumns, conn)
+		checkTableChanges(t, dataMap, sql, db.sql)
+		checkIndex(t.Indexes, t, sqlColumns, db.sql)
 	}
 
 	for _, t := range migrator.Tables {
@@ -42,28 +43,28 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator, co
 	var sqlString string
 	if sql.Len() != 0 {
 		sqlString = sql.String()
-		if err := conn.ExecContext(ctx, sql.String()); err != nil {
+		if _, err := db.sql.ExecContext(ctx, sql.String()); err != nil {
 			return sqlString, err
 		}
 	}
 	return sqlString, nil
 }
 
-func (db *Driver) DropTable(table string, conn goe.Connection) (string, error) {
+func (db *Driver) DropTable(table string) (string, error) {
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %v;", table)
-	err := conn.ExecContext(context.Background(), sql)
+	_, err := db.sql.ExecContext(context.Background(), sql)
 	return sql, err
 }
 
-func (db *Driver) RenameColumn(table, oldColumn, newColumn string, conn goe.Connection) (string, error) {
+func (db *Driver) RenameColumn(table, oldColumn, newColumn string) (string, error) {
 	sql := renameColumn(table, oldColumn, newColumn)
-	err := conn.ExecContext(context.Background(), sql)
+	_, err := db.sql.ExecContext(context.Background(), sql)
 	return sql, err
 }
 
-func (db *Driver) DropColumn(table, column string, conn goe.Connection) (string, error) {
+func (db *Driver) DropColumn(table, column string) (string, error) {
 	sql := dropColumn(table, column)
-	err := conn.ExecContext(context.Background(), sql)
+	_, err := db.sql.ExecContext(context.Background(), sql)
 	return sql, err
 }
 
@@ -95,7 +96,7 @@ type dbTable struct {
 	columns map[string]*dbColumn
 }
 
-func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn goe.Connection) {
+func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn *sql.DB) {
 	sqlTableInfos := `SELECT
 	column_name, CASE 
 	WHEN data_type = 'character varying' 
@@ -244,7 +245,7 @@ type databaseIndex struct {
 	migrated  bool
 }
 
-func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn goe.Connection) {
+func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *sql.DB) {
 	sqlQuery := `SELECT DISTINCT ci.relname, i.indisunique as is_unique, c.relname, a.attname FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
@@ -318,7 +319,7 @@ func createIndex(index goe.IndexMigrate, table string) string {
 	)
 }
 
-func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder) {
+func checkFields(conn *sql.DB, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder) {
 	for _, att := range table.PrimaryKeys {
 		if column := dbTable.columns[att.Name]; column != nil {
 			if primaryKeyIsForeignKey(table, att.Name) {
@@ -393,7 +394,7 @@ func checkFields(conn goe.Connection, dbTable dbTable, table *goe.TableMigrate, 
 	}
 }
 
-func checkFkUnique(conn goe.Connection, table, attribute string) (string, bool) {
+func checkFkUnique(conn *sql.DB, table, attribute string) (string, bool) {
 	sql := `SELECT ci.relname, i.indisunique as is_unique FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid

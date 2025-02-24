@@ -5,9 +5,10 @@ import (
 	"strings"
 
 	"github.com/olauro/goe"
+	goeQuery "github.com/olauro/goe/query"
 )
 
-func buildSql(query goe.Query) (string, []any) {
+func buildSql(query goe.Query) string {
 	switch query.Type {
 	case goe.SelectQuery:
 		return buildSelect(query)
@@ -20,13 +21,11 @@ func buildSql(query goe.Query) (string, []any) {
 		//TODO add goe.RawQuery
 	}
 
-	return "", nil
+	return ""
 }
 
-func buildSelect(query goe.Query) (string, []any) {
+func buildSelect(query goe.Query) string {
 	builder := strings.Builder{}
-	//TODO: check this
-	args := make([]any, 0, len(query.Arguments))
 
 	builder.WriteString("SELECT")
 
@@ -55,25 +54,7 @@ func buildSelect(query goe.Query) (string, []any) {
 		}
 	}
 
-	//TODO: create a function
-	if query.WhereOperations != nil {
-		builder.WriteByte('\n')
-		builder.WriteString("WHERE")
-
-		for _, w := range query.WhereOperations {
-			switch w.Type {
-			case goe.OperationWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, w.ValueFlag))
-				args = append(args, w.Value)
-			case goe.OperationIsWhere:
-				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), w.Operator))
-			case goe.OperationArgumentWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, w.ValueFlag))
-			case goe.LogicalWhere:
-				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
-			}
-		}
-	}
+	writeWhere(&query, &builder)
 
 	if query.OrderBy != nil {
 		builder.WriteByte('\n')
@@ -93,7 +74,7 @@ func buildSelect(query goe.Query) (string, []any) {
 		builder.WriteString(fmt.Sprintf("OFFSET %v", query.Offset))
 	}
 
-	return builder.String(), args
+	return builder.String()
 }
 
 func writeAttributes(a goe.Attribute) string {
@@ -109,7 +90,7 @@ func writeAttributes(a goe.Attribute) string {
 	return a.Table + "." + a.Name
 }
 
-func buildInsert(query goe.Query) (string, []any) {
+func buildInsert(query goe.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("INSERT INTO")
@@ -153,12 +134,11 @@ func buildInsert(query goe.Query) (string, []any) {
 		builder.WriteString(query.ReturningId.Name)
 	}
 
-	return builder.String(), query.Arguments
+	return builder.String()
 }
 
-func buildUpdate(query goe.Query) (string, []any) {
+func buildUpdate(query goe.Query) string {
 	builder := strings.Builder{}
-	args := make([]any, 0, len(query.Arguments))
 
 	builder.WriteString("UPDATE")
 	builder.WriteString(query.Tables[0])
@@ -176,51 +156,38 @@ func buildUpdate(query goe.Query) (string, []any) {
 		builder.WriteString(fmt.Sprintf("$%v", i))
 	}
 
-	if query.WhereOperations != nil {
-		builder.WriteByte('\n')
-		builder.WriteString("WHERE")
+	writeWhere(&query, &builder)
 
-		for _, w := range query.WhereOperations {
-			switch w.Type {
-			case goe.OperationWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, w.ValueFlag))
-				args = append(args, w.Value)
-			case goe.OperationIsWhere:
-				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), w.Operator))
-			case goe.OperationArgumentWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, w.ValueFlag))
-			case goe.LogicalWhere:
-				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
-			}
-		}
-	}
-
-	query.Arguments = append(query.Arguments, args...)
-	return builder.String(), query.Arguments
+	return builder.String()
 }
 
-func buildDelete(query goe.Query) (string, []any) {
+func buildDelete(query goe.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("DELETE FROM")
 	builder.WriteString(query.Tables[0])
+	writeWhere(&query, &builder)
+
+	return builder.String()
+}
+
+func writeWhere(query *goe.Query, builder *strings.Builder) {
 	if query.WhereOperations != nil {
 		builder.WriteByte('\n')
 		builder.WriteString("WHERE")
 
 		for _, w := range query.WhereOperations {
 			switch w.Type {
-			case goe.OperationWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, w.ValueFlag))
-			case goe.OperationIsWhere:
+			case goeQuery.OperationWhere:
+				builder.WriteString(fmt.Sprintf("%v %v $%v", writeAttributes(w.Attribute), w.Operator, query.WhereIndex))
+				query.WhereIndex++
+			case goeQuery.OperationIsWhere:
 				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), w.Operator))
-			case goe.OperationArgumentWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, w.ValueFlag))
-			case goe.LogicalWhere:
+			case goeQuery.OperationAttributeWhere:
+				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, writeAttributes(w.AttributeValue)))
+			case goeQuery.LogicalWhere:
 				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
 			}
 		}
 	}
-
-	return builder.String(), query.Arguments
 }

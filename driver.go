@@ -110,8 +110,7 @@ type Connection struct {
 }
 
 func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
-	sql, args := buildSql(query)
-	rows, err := c.sql.QueryContext(ctx, sql, args...)
+	rows, err := c.sql.QueryContext(ctx, buildSql(query), query.Arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -120,15 +119,13 @@ func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows
 }
 
 func (c Connection) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
-	sql, args := buildSql(query)
-	row := c.sql.QueryRowContext(ctx, sql, args...)
+	row := c.sql.QueryRowContext(ctx, buildSql(query), query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (c Connection) ExecContext(ctx context.Context, query goe.Query) error {
-	sql, args := buildSql(query)
-	_, err := c.sql.ExecContext(ctx, sql, args...)
+	_, err := c.sql.ExecContext(ctx, buildSql(query), query.Arguments...)
 
 	return err
 }
@@ -146,8 +143,7 @@ type Transaction struct {
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
-	sql, args := buildSql(query)
-	rows, err := t.tx.QueryContext(ctx, sql, args...)
+	rows, err := t.tx.QueryContext(ctx, buildSql(query), query.Arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -156,15 +152,13 @@ func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Row
 }
 
 func (t Transaction) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
-	sql, args := buildSql(query)
-	row := t.tx.QueryRowContext(ctx, sql, args...)
+	row := t.tx.QueryRowContext(ctx, buildSql(query), query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (t Transaction) ExecContext(ctx context.Context, query goe.Query) error {
-	sql, args := buildSql(query)
-	_, err := t.tx.ExecContext(ctx, sql, args...)
+	_, err := t.tx.ExecContext(ctx, buildSql(query), query.Arguments...)
 
 	return err
 }

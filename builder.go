@@ -5,20 +5,21 @@ import (
 	"strings"
 
 	"github.com/olauro/goe"
-	goeQuery "github.com/olauro/goe/query"
+	"github.com/olauro/goe/enum"
 )
 
 func buildSql(query goe.Query) string {
 	switch query.Type {
-	case goe.SelectQuery:
+	case enum.SelectQuery:
 		return buildSelect(query)
-	case goe.InsertQuery:
+	case enum.InsertQuery:
 		return buildInsert(query)
-	case goe.UpdateQuery:
+	case enum.UpdateQuery:
 		return buildUpdate(query)
-	case goe.DeleteQuery:
+	case enum.DeleteQuery:
 		return buildDelete(query)
-		//TODO add goe.RawQuery
+	case enum.RawQuery:
+		return query.RawSql
 	}
 
 	return ""
@@ -79,11 +80,11 @@ func buildSelect(query goe.Query) string {
 
 func writeAttributes(a goe.Attribute) string {
 	switch a.FunctionType {
-	case goe.UpperFunction:
+	case enum.UpperFunction:
 		return fmt.Sprintf(" UPPER(%v)", a.Table+"."+a.Name)
 	}
 	switch a.AggregateType {
-	case goe.CountAggregate:
+	case enum.CountAggregate:
 		return fmt.Sprintf(" COUNT(%v)", a.Table+"."+a.Name)
 
 	}
@@ -107,7 +108,6 @@ func buildInsert(query goe.Query) string {
 	i := 1
 	builder.WriteString(fmt.Sprintf("$%v", i))
 
-	// TODO: check this
 	for range query.SizeArguments - 1 {
 		i++
 		builder.WriteByte(',')
@@ -120,7 +120,6 @@ func buildInsert(query goe.Query) string {
 		builder.WriteString(",(")
 		builder.WriteString(fmt.Sprintf("$%v", i))
 
-		// TODO: check this
 		for range query.SizeArguments - 1 {
 			i++
 			builder.WriteByte(',')
@@ -178,14 +177,14 @@ func writeWhere(query *goe.Query, builder *strings.Builder) {
 
 		for _, w := range query.WhereOperations {
 			switch w.Type {
-			case goeQuery.OperationWhere:
+			case enum.OperationWhere:
 				builder.WriteString(fmt.Sprintf("%v %v $%v", writeAttributes(w.Attribute), w.Operator, query.WhereIndex))
 				query.WhereIndex++
-			case goeQuery.OperationIsWhere:
+			case enum.OperationIsWhere:
 				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), w.Operator))
-			case goeQuery.OperationAttributeWhere:
+			case enum.OperationAttributeWhere:
 				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, writeAttributes(w.AttributeValue)))
-			case goeQuery.LogicalWhere:
+			case enum.LogicalWhere:
 				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
 			}
 		}

@@ -11,13 +11,19 @@ import (
 )
 
 type Driver struct {
-	dns string
-	sql *sql.DB
+	dns    string
+	sql    *sql.DB
+	config Config
 }
 
-func Open(dns string) (driver *Driver) {
+type Config struct {
+	LogQuery bool
+}
+
+func Open(dns string, config Config) (driver *Driver) {
 	return &Driver{
-		dns: dns,
+		dns:    dns,
+		config: config,
 	}
 }
 
@@ -47,15 +53,16 @@ func (dr *Driver) Stats() sql.DBStats {
 }
 
 func (dr *Driver) NewConnection() goe.Connection {
-	return Connection{sql: dr.sql}
+	return Connection{sql: dr.sql, config: dr.config}
 }
 
 type Connection struct {
-	sql *sql.DB
+	config Config
+	sql    *sql.DB
 }
 
 func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
-	rows, err := c.sql.QueryContext(ctx, buildSql(query), query.Arguments...)
+	rows, err := c.sql.QueryContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,13 +71,13 @@ func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows
 }
 
 func (c Connection) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
-	row := c.sql.QueryRowContext(ctx, buildSql(query), query.Arguments...)
+	row := c.sql.QueryRowContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (c Connection) ExecContext(ctx context.Context, query goe.Query) error {
-	_, err := c.sql.ExecContext(ctx, buildSql(query), query.Arguments...)
+	_, err := c.sql.ExecContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
 
 	return err
 }
@@ -80,15 +87,16 @@ func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (goe.
 	if err != nil {
 		return nil, err
 	}
-	return Transaction{tx: tx}, nil
+	return Transaction{tx: tx, config: dr.config}, nil
 }
 
 type Transaction struct {
-	tx *sql.Tx
+	config Config
+	tx     *sql.Tx
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
-	rows, err := t.tx.QueryContext(ctx, buildSql(query), query.Arguments...)
+	rows, err := t.tx.QueryContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +105,13 @@ func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Row
 }
 
 func (t Transaction) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
-	row := t.tx.QueryRowContext(ctx, buildSql(query), query.Arguments...)
+	row := t.tx.QueryRowContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (t Transaction) ExecContext(ctx context.Context, query goe.Query) error {
-	_, err := t.tx.ExecContext(ctx, buildSql(query), query.Arguments...)
+	_, err := t.tx.ExecContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
 
 	return err
 }

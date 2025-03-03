@@ -2,27 +2,34 @@ package postgres
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/olauro/goe"
 	"github.com/olauro/goe/enum"
 )
 
-func buildSql(query goe.Query) string {
+func buildSql(query goe.Query, logQuery bool) string {
+	var sql string
+
 	switch query.Type {
 	case enum.SelectQuery:
-		return buildSelect(query)
+		sql = buildSelect(query)
 	case enum.InsertQuery:
-		return buildInsert(query)
+		sql = buildInsert(query)
 	case enum.UpdateQuery:
-		return buildUpdate(query)
+		sql = buildUpdate(query)
 	case enum.DeleteQuery:
-		return buildDelete(query)
+		sql = buildDelete(query)
 	case enum.RawQuery:
-		return query.RawSql
+		sql = query.RawSql
 	}
 
-	return ""
+	if logQuery {
+		log.Println("\n" + sql)
+	}
+
+	return sql
 }
 
 func buildSelect(query goe.Query) string {

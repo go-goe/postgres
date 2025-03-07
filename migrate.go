@@ -9,6 +9,7 @@ import (
 
 	"github.com/olauro/goe"
 	"github.com/olauro/goe/enum"
+	"github.com/olauro/goe/model"
 )
 
 func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) error {
@@ -42,24 +43,24 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	sql.WriteString(sqlColumns.String())
 
 	if sql.Len() != 0 {
-		return db.NewConnection().ExecContext(ctx, goe.Query{Type: enum.RawQuery, RawSql: sql.String()})
+		return db.NewConnection().ExecContext(ctx, model.Query{Type: enum.RawQuery, RawSql: sql.String()})
 	}
 	return nil
 }
 
 func (db *Driver) DropTable(table string) error {
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %v;", table)
-	return db.NewConnection().ExecContext(context.Background(), goe.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
 }
 
 func (db *Driver) RenameColumn(table, oldColumn, newColumn string) error {
 	sql := renameColumn(table, oldColumn, newColumn)
-	return db.NewConnection().ExecContext(context.Background(), goe.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
 }
 
 func (db *Driver) DropColumn(table, column string) error {
 	sql := dropColumn(table, column)
-	return db.NewConnection().ExecContext(context.Background(), goe.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
 }
 
 func renameColumn(table, oldColumnName, newColumnName string) string {

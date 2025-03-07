@@ -5,11 +5,11 @@ import (
 	"log"
 	"strings"
 
-	"github.com/olauro/goe"
 	"github.com/olauro/goe/enum"
+	"github.com/olauro/goe/model"
 )
 
-func buildSql(query goe.Query, logQuery bool) string {
+func buildSql(query model.Query, logQuery bool) string {
 	var sql string
 
 	switch query.Type {
@@ -32,7 +32,7 @@ func buildSql(query goe.Query, logQuery bool) string {
 	return sql
 }
 
-func buildSelect(query goe.Query) string {
+func buildSelect(query model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("SELECT")
@@ -85,20 +85,7 @@ func buildSelect(query goe.Query) string {
 	return builder.String()
 }
 
-func writeAttributes(a goe.Attribute) string {
-	switch a.FunctionType {
-	case enum.UpperFunction:
-		return fmt.Sprintf(" UPPER(%v)", a.Table+"."+a.Name)
-	}
-	switch a.AggregateType {
-	case enum.CountAggregate:
-		return fmt.Sprintf(" COUNT(%v)", a.Table+"."+a.Name)
-
-	}
-	return a.Table + "." + a.Name
-}
-
-func buildInsert(query goe.Query) string {
+func buildInsert(query model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("INSERT INTO")
@@ -143,7 +130,7 @@ func buildInsert(query goe.Query) string {
 	return builder.String()
 }
 
-func buildUpdate(query goe.Query) string {
+func buildUpdate(query model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("UPDATE")
@@ -167,7 +154,7 @@ func buildUpdate(query goe.Query) string {
 	return builder.String()
 }
 
-func buildDelete(query goe.Query) string {
+func buildDelete(query model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("DELETE FROM")
@@ -177,7 +164,20 @@ func buildDelete(query goe.Query) string {
 	return builder.String()
 }
 
-func writeWhere(query *goe.Query, builder *strings.Builder) {
+func writeAttributes(a model.Attribute) string {
+	switch a.FunctionType {
+	case enum.UpperFunction:
+		return fmt.Sprintf(" UPPER(%v)", a.Table+"."+a.Name)
+	}
+	switch a.AggregateType {
+	case enum.CountAggregate:
+		return fmt.Sprintf(" COUNT(%v)", a.Table+"."+a.Name)
+
+	}
+	return a.Table + "." + a.Name
+}
+
+func writeWhere(query *model.Query, builder *strings.Builder) {
 	if query.WhereOperations != nil {
 		builder.WriteByte('\n')
 		builder.WriteString("WHERE")
@@ -191,6 +191,18 @@ func writeWhere(query *goe.Query, builder *strings.Builder) {
 				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), w.Operator))
 			case enum.OperationAttributeWhere:
 				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, writeAttributes(w.AttributeValue)))
+			case enum.OperationInWhere:
+				if w.SizeIn == 0 {
+					continue
+				}
+				builder.WriteString(fmt.Sprintf("%v IN (", writeAttributes(w.Attribute)))
+				builder.WriteString(fmt.Sprintf("$%v", query.WhereIndex))
+				query.WhereIndex++
+				for range w.SizeIn - 1 {
+					builder.WriteString(fmt.Sprintf(",$%v", query.WhereIndex))
+					query.WhereIndex++
+				}
+				builder.WriteByte(')')
 			case enum.LogicalWhere:
 				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
 			}

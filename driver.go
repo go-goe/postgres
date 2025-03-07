@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/olauro/goe"
+	"github.com/olauro/goe/model"
 )
 
 type Driver struct {
@@ -61,7 +62,7 @@ type Connection struct {
 	sql    *sql.DB
 }
 
-func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
+func (c Connection) QueryContext(ctx context.Context, query model.Query) (goe.Rows, error) {
 	rows, err := c.sql.QueryContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
 	if err != nil {
 		return nil, err
@@ -70,13 +71,13 @@ func (c Connection) QueryContext(ctx context.Context, query goe.Query) (goe.Rows
 	return Rows{rows: rows}, nil
 }
 
-func (c Connection) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
+func (c Connection) QueryRowContext(ctx context.Context, query model.Query) goe.Row {
 	row := c.sql.QueryRowContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
 
 	return Row{row: row}
 }
 
-func (c Connection) ExecContext(ctx context.Context, query goe.Query) error {
+func (c Connection) ExecContext(ctx context.Context, query model.Query) error {
 	_, err := c.sql.ExecContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
 
 	return err
@@ -95,7 +96,7 @@ type Transaction struct {
 	tx     *sql.Tx
 }
 
-func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Rows, error) {
+func (t Transaction) QueryContext(ctx context.Context, query model.Query) (goe.Rows, error) {
 	rows, err := t.tx.QueryContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
 	if err != nil {
 		return nil, err
@@ -104,13 +105,13 @@ func (t Transaction) QueryContext(ctx context.Context, query goe.Query) (goe.Row
 	return Rows{rows: rows}, nil
 }
 
-func (t Transaction) QueryRowContext(ctx context.Context, query goe.Query) goe.Row {
+func (t Transaction) QueryRowContext(ctx context.Context, query model.Query) goe.Row {
 	row := t.tx.QueryRowContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
 
 	return Row{row: row}
 }
 
-func (t Transaction) ExecContext(ctx context.Context, query goe.Query) error {
+func (t Transaction) ExecContext(ctx context.Context, query model.Query) error {
 	_, err := t.tx.ExecContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
 
 	return err

@@ -9,7 +9,7 @@ import (
 	"github.com/olauro/goe/model"
 )
 
-func buildSql(query model.Query, logQuery bool) string {
+func buildSql(query *model.Query, logQuery bool) string {
 	var sql string
 
 	switch query.Type {
@@ -32,7 +32,7 @@ func buildSql(query model.Query, logQuery bool) string {
 	return sql
 }
 
-func buildSelect(query model.Query) string {
+func buildSelect(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("SELECT")
@@ -62,7 +62,7 @@ func buildSelect(query model.Query) string {
 		}
 	}
 
-	writeWhere(&query, &builder)
+	writeWhere(query, &builder)
 
 	if query.OrderBy != nil {
 		builder.WriteByte('\n')
@@ -85,7 +85,7 @@ func buildSelect(query model.Query) string {
 	return builder.String()
 }
 
-func buildInsert(query model.Query) string {
+func buildInsert(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("INSERT INTO")
@@ -130,7 +130,7 @@ func buildInsert(query model.Query) string {
 	return builder.String()
 }
 
-func buildUpdate(query model.Query) string {
+func buildUpdate(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("UPDATE")
@@ -149,17 +149,17 @@ func buildUpdate(query model.Query) string {
 		builder.WriteString(fmt.Sprintf("$%v", i))
 	}
 
-	writeWhere(&query, &builder)
+	writeWhere(query, &builder)
 
 	return builder.String()
 }
 
-func buildDelete(query model.Query) string {
+func buildDelete(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("DELETE FROM")
 	builder.WriteString(query.Tables[0])
-	writeWhere(&query, &builder)
+	writeWhere(query, &builder)
 
 	return builder.String()
 }
@@ -192,20 +192,30 @@ func writeWhere(query *model.Query, builder *strings.Builder) {
 			case enum.OperationAttributeWhere:
 				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, writeAttributes(w.AttributeValue)))
 			case enum.OperationInWhere:
-				if w.SizeIn == 0 {
+				if w.QueryIn != nil {
+					w.QueryIn.WhereIndex = query.WhereIndex
+					query.Arguments = append(query.Arguments, w.QueryIn.Arguments...)
+					builder.WriteString(fmt.Sprintf("%v IN (%v)", writeAttributes(w.Attribute), buildSelect(w.QueryIn)))
 					continue
 				}
-				builder.WriteString(fmt.Sprintf("%v IN (", writeAttributes(w.Attribute)))
-				builder.WriteString(fmt.Sprintf("$%v", query.WhereIndex))
-				query.WhereIndex++
-				for range w.SizeIn - 1 {
-					builder.WriteString(fmt.Sprintf(",$%v", query.WhereIndex))
-					query.WhereIndex++
-				}
-				builder.WriteByte(')')
+				writeWhereInArgument(&w, builder, query)
 			case enum.LogicalWhere:
 				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
 			}
 		}
 	}
+}
+
+func writeWhereInArgument(where *model.Where, builder *strings.Builder, query *model.Query) {
+	if where.SizeIn == 0 {
+		return
+	}
+	builder.WriteString(fmt.Sprintf("%v IN (", writeAttributes(where.Attribute)))
+	builder.WriteString(fmt.Sprintf("$%v", query.WhereIndex))
+	query.WhereIndex++
+	for range where.SizeIn - 1 {
+		builder.WriteString(fmt.Sprintf(",$%v", query.WhereIndex))
+		query.WhereIndex++
+	}
+	builder.WriteByte(')')
 }

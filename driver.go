@@ -63,7 +63,7 @@ type Connection struct {
 }
 
 func (c Connection) QueryContext(ctx context.Context, query model.Query) (goe.Rows, error) {
-	rows, err := c.sql.QueryContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
+	rows, err := c.sql.QueryContext(ctx, buildSql(&query, c.config.LogQuery), query.Arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -72,13 +72,13 @@ func (c Connection) QueryContext(ctx context.Context, query model.Query) (goe.Ro
 }
 
 func (c Connection) QueryRowContext(ctx context.Context, query model.Query) goe.Row {
-	row := c.sql.QueryRowContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
+	row := c.sql.QueryRowContext(ctx, buildSql(&query, c.config.LogQuery), query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (c Connection) ExecContext(ctx context.Context, query model.Query) error {
-	_, err := c.sql.ExecContext(ctx, buildSql(query, c.config.LogQuery), query.Arguments...)
+	_, err := c.sql.ExecContext(ctx, buildSql(&query, c.config.LogQuery), query.Arguments...)
 
 	return err
 }
@@ -97,7 +97,7 @@ type Transaction struct {
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query model.Query) (goe.Rows, error) {
-	rows, err := t.tx.QueryContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
+	rows, err := t.tx.QueryContext(ctx, buildSql(&query, t.config.LogQuery), query.Arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -106,13 +106,13 @@ func (t Transaction) QueryContext(ctx context.Context, query model.Query) (goe.R
 }
 
 func (t Transaction) QueryRowContext(ctx context.Context, query model.Query) goe.Row {
-	row := t.tx.QueryRowContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
+	row := t.tx.QueryRowContext(ctx, buildSql(&query, t.config.LogQuery), query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (t Transaction) ExecContext(ctx context.Context, query model.Query) error {
-	_, err := t.tx.ExecContext(ctx, buildSql(query, t.config.LogQuery), query.Arguments...)
+	_, err := t.tx.ExecContext(ctx, buildSql(&query, t.config.LogQuery), query.Arguments...)
 
 	return err
 }

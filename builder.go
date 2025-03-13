@@ -193,8 +193,13 @@ func writeWhere(query *model.Query, builder *strings.Builder) {
 				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, writeAttributes(w.AttributeValue)))
 			case enum.OperationInWhere:
 				if w.QueryIn != nil {
-					w.QueryIn.WhereIndex = query.WhereIndex
-					query.Arguments = append(query.Arguments, w.QueryIn.Arguments...)
+					if w.QueryIn.Arguments != nil {
+						w.QueryIn.WhereIndex = query.WhereIndex
+						query.Arguments = append(query.Arguments[:w.QueryIn.WhereIndex-1], append(w.QueryIn.Arguments, query.Arguments[w.QueryIn.WhereIndex-1:]...)...)
+						builder.WriteString(fmt.Sprintf("%v IN (%v)", writeAttributes(w.Attribute), buildSelect(w.QueryIn)))
+						query.WhereIndex = w.QueryIn.WhereIndex
+						continue
+					}
 					builder.WriteString(fmt.Sprintf("%v IN (%v)", writeAttributes(w.Attribute), buildSelect(w.QueryIn)))
 					continue
 				}

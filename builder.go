@@ -9,6 +9,28 @@ import (
 	"github.com/olauro/goe/model"
 )
 
+var joins = map[enum.JoinType]string{
+	enum.Join:      "JOIN",
+	enum.LeftJoin:  "LEFT JOIN",
+	enum.RightJoin: "RIGHT JOIN",
+}
+
+var operators = map[enum.OperatorType]string{
+	enum.And:           "AND",
+	enum.Or:            "OR",
+	enum.Equals:        "=",
+	enum.NotEquals:     "<>",
+	enum.Greater:       ">",
+	enum.GreaterEquals: ">=",
+	enum.Less:          "<",
+	enum.LessEquals:    "<=",
+	enum.Like:          "LIKE",
+	enum.In:            "IN",
+	enum.NotIn:         "NOT IN",
+	enum.Is:            "IS",
+	enum.IsNot:         "IS NOT",
+}
+
 func buildSql(query *model.Query, logQuery bool) string {
 	var sql string
 
@@ -54,7 +76,7 @@ func buildSelect(query *model.Query) string {
 		builder.WriteByte('\n')
 		for _, j := range query.Joins {
 			builder.WriteString(fmt.Sprintf("%v %v on (%v = %v)",
-				j.JoinOperation,
+				joins[j.JoinOperation],
 				j.Table,
 				(j.FirstArgument.Table + "." + j.FirstArgument.Name),
 				(j.SecondArgument.Table + "." + j.SecondArgument.Name),
@@ -185,27 +207,27 @@ func writeWhere(query *model.Query, builder *strings.Builder) {
 		for _, w := range query.WhereOperations {
 			switch w.Type {
 			case enum.OperationWhere:
-				builder.WriteString(fmt.Sprintf("%v %v $%v", writeAttributes(w.Attribute), w.Operator, query.WhereIndex))
+				builder.WriteString(fmt.Sprintf("%v %v $%v", writeAttributes(w.Attribute), operators[w.Operator], query.WhereIndex))
 				query.WhereIndex++
 			case enum.OperationIsWhere:
-				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), w.Operator))
+				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), operators[w.Operator]))
 			case enum.OperationAttributeWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), w.Operator, writeAttributes(w.AttributeValue)))
+				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), operators[w.Operator], writeAttributes(w.AttributeValue)))
 			case enum.OperationInWhere:
 				if w.QueryIn != nil {
 					if w.QueryIn.Arguments != nil {
 						w.QueryIn.WhereIndex = query.WhereIndex
 						query.Arguments = append(query.Arguments[:w.QueryIn.WhereIndex-1], append(w.QueryIn.Arguments, query.Arguments[w.QueryIn.WhereIndex-1:]...)...)
-						builder.WriteString(fmt.Sprintf("%v IN (%v)", writeAttributes(w.Attribute), buildSelect(w.QueryIn)))
+						builder.WriteString(fmt.Sprintf("%v %v (%v)", writeAttributes(w.Attribute), operators[w.Operator], buildSelect(w.QueryIn)))
 						query.WhereIndex = w.QueryIn.WhereIndex
 						continue
 					}
-					builder.WriteString(fmt.Sprintf("%v IN (%v)", writeAttributes(w.Attribute), buildSelect(w.QueryIn)))
+					builder.WriteString(fmt.Sprintf("%v %v (%v)", writeAttributes(w.Attribute), operators[w.Operator], buildSelect(w.QueryIn)))
 					continue
 				}
 				writeWhereInArgument(&w, builder, query)
 			case enum.LogicalWhere:
-				builder.WriteString(fmt.Sprintf(" %v ", w.Operator))
+				builder.WriteString(fmt.Sprintf(" %v ", operators[w.Operator]))
 			}
 		}
 	}

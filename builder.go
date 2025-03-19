@@ -31,6 +31,15 @@ var operators = map[enum.OperatorType]string{
 	enum.IsNot:         "IS NOT",
 }
 
+var functions = map[enum.FunctionType]string{
+	enum.UpperFunction: "UPPER",
+	enum.LowerFunction: "LOWER",
+}
+
+var aggregates = map[enum.AggregateType]string{
+	enum.CountAggregate: "COUNT",
+}
+
 func buildSql(query *model.Query, logQuery bool) string {
 	var sql string
 
@@ -187,15 +196,14 @@ func buildDelete(query *model.Query) string {
 }
 
 func writeAttributes(a model.Attribute) string {
-	switch a.FunctionType {
-	case enum.UpperFunction:
-		return fmt.Sprintf(" UPPER(%v)", a.Table+"."+a.Name)
+	if a.FunctionType != 0 {
+		return fmt.Sprintf(" %v(%v)", functions[a.FunctionType], a.Table+"."+a.Name)
 	}
-	switch a.AggregateType {
-	case enum.CountAggregate:
-		return fmt.Sprintf(" COUNT(%v)", a.Table+"."+a.Name)
 
+	if a.AggregateType != 0 {
+		return fmt.Sprintf(" %v(%v)", aggregates[a.AggregateType], a.Table+"."+a.Name)
 	}
+
 	return a.Table + "." + a.Name
 }
 

@@ -53,6 +53,10 @@ func (dr *Driver) Stats() sql.DBStats {
 	return dr.sql.Stats()
 }
 
+func (dr *Driver) Close() error {
+	return dr.sql.Close()
+}
+
 func (dr *Driver) NewConnection() goe.Connection {
 	return Connection{sql: dr.sql, config: dr.config}
 }

@@ -25,6 +25,7 @@ var operators = map[enum.OperatorType]string{
 	enum.Less:          "<",
 	enum.LessEquals:    "<=",
 	enum.Like:          "LIKE",
+	enum.NotLike:       "NOT LIKE",
 	enum.In:            "IN",
 	enum.NotIn:         "NOT IN",
 	enum.Is:            "IS",
@@ -81,16 +82,14 @@ func buildSelect(query *model.Query) string {
 		builder.WriteString(t)
 	}
 
-	if query.Joins != nil {
+	for _, j := range query.Joins {
 		builder.WriteByte('\n')
-		for _, j := range query.Joins {
-			builder.WriteString(fmt.Sprintf("%v %v on (%v = %v)",
-				joins[j.JoinOperation],
-				j.Table,
-				(j.FirstArgument.Table + "." + j.FirstArgument.Name),
-				(j.SecondArgument.Table + "." + j.SecondArgument.Name),
-			))
-		}
+		builder.WriteString(fmt.Sprintf("%v %v on (%v = %v)",
+			joins[j.JoinOperation],
+			j.Table,
+			(j.FirstArgument.Table + "." + j.FirstArgument.Name),
+			(j.SecondArgument.Table + "." + j.SecondArgument.Name),
+		))
 	}
 
 	writeWhere(query, &builder)
@@ -245,8 +244,7 @@ func writeWhereInArgument(where *model.Where, builder *strings.Builder, query *m
 	if where.SizeIn == 0 {
 		return
 	}
-	builder.WriteString(fmt.Sprintf("%v IN (", writeAttributes(where.Attribute)))
-	builder.WriteString(fmt.Sprintf("$%v", query.WhereIndex))
+	builder.WriteString(fmt.Sprintf("%v %v ($%v", writeAttributes(where.Attribute), operators[where.Operator], query.WhereIndex))
 	query.WhereIndex++
 	for range where.SizeIn - 1 {
 		builder.WriteString(fmt.Sprintf(",$%v", query.WhereIndex))

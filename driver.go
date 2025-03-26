@@ -49,6 +49,10 @@ func (dr *Driver) Name() string {
 	return "PostgreSQL"
 }
 
+func (dr *Driver) Log(b bool) {
+	dr.config.LogQuery = b
+}
+
 func (dr *Driver) Stats() sql.DBStats {
 	return dr.sql.Stats()
 }

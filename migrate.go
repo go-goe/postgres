@@ -2,11 +2,11 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/olauro/goe"
 	"github.com/olauro/goe/enum"
 	"github.com/olauro/goe/model"
@@ -91,7 +91,7 @@ type dbTable struct {
 	columns map[string]*dbColumn
 }
 
-func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn *sql.DB) {
+func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn *pgxpool.Pool) {
 	sqlTableInfos := `SELECT
 	column_name, CASE 
 	WHEN data_type = 'character varying' 
@@ -100,7 +100,7 @@ func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *
 	when data_type = 'bigint' then case WHEN column_default like 'nextval%' THEN 'bigserial' ELSE data_type end
 	when data_type like 'timestamp%' then 'timestamp'
 	ELSE data_type END, 
-	CASE WHEN column_default like 'nextval%' THEN True ELSE False end as auto_increment,
+	column_default,
 	CASE
 	WHEN is_nullable = 'YES'
 	THEN True
@@ -108,7 +108,7 @@ func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *
 	FROM information_schema.columns WHERE table_name = $1;	
 	`
 
-	rows, err := conn.QueryContext(context.Background(), sqlTableInfos, table.Name)
+	rows, err := conn.Query(context.Background(), sqlTableInfos, table.Name)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -240,7 +240,7 @@ type databaseIndex struct {
 	migrated  bool
 }
 
-func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *sql.DB) {
+func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *pgxpool.Pool) {
 	sqlQuery := `SELECT DISTINCT ci.relname, i.indisunique as is_unique, c.relname, a.attname FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
@@ -248,7 +248,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 	where i.indisprimary = false AND c.relname = $1;
 	`
 
-	rows, err := conn.QueryContext(context.Background(), sqlQuery, table.Name)
+	rows, err := conn.Query(context.Background(), sqlQuery, table.Name)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -314,7 +314,7 @@ func createIndex(index goe.IndexMigrate, table string) string {
 	)
 }
 
-func checkFields(conn *sql.DB, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder) {
+func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder) {
 	for _, att := range table.PrimaryKeys {
 		if column := dbTable.columns[att.Name]; column != nil {
 			if primaryKeyIsForeignKey(table, att.Name) {
@@ -389,7 +389,7 @@ func checkFields(conn *sql.DB, dbTable dbTable, table *goe.TableMigrate, dataMap
 	}
 }
 
-func checkFkUnique(conn *sql.DB, table, attribute string) (string, bool) {
+func checkFkUnique(conn *pgxpool.Pool, table, attribute string) (string, bool) {
 	sql := `SELECT ci.relname, i.indisunique as is_unique FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
@@ -398,7 +398,7 @@ func checkFkUnique(conn *sql.DB, table, attribute string) (string, bool) {
 
 	var b bool
 	var s string
-	row := conn.QueryRowContext(context.Background(), sql, table, attribute)
+	row := conn.QueryRow(context.Background(), sql, table, attribute)
 	row.Scan(&s, &b)
 	return s, b
 }

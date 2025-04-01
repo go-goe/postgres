@@ -39,6 +39,11 @@ func (dr *Driver) Init() error {
 		return err
 	}
 
+	err = dr.sql.Ping(context.Background())
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

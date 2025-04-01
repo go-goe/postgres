@@ -28,10 +28,17 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 
 	sql := new(strings.Builder)
 	sqlColumns := new(strings.Builder)
-
+	var err error
 	for _, t := range migrator.Tables {
-		checkTableChanges(t, dataMap, sql, db.sql)
-		checkIndex(t.Indexes, t, sqlColumns, db.sql)
+		err = checkTableChanges(t, dataMap, sql, db.sql)
+		if err != nil {
+			return err
+		}
+
+		err = checkIndex(t.Indexes, t, sqlColumns, db.sql)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, t := range migrator.Tables {
@@ -91,7 +98,7 @@ type dbTable struct {
 	columns map[string]*dbColumn
 }
 
-func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn *pgxpool.Pool) {
+func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn *pgxpool.Pool) error {
 	sqlTableInfos := `SELECT
 	column_name, CASE 
 	WHEN data_type = 'character varying' 
@@ -110,8 +117,7 @@ func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *
 
 	rows, err := conn.Query(context.Background(), sqlTableInfos, table.Name)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer rows.Close()
 
@@ -120,9 +126,7 @@ func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *
 	for rows.Next() {
 		err = rows.Scan(&dt.columnName, &dt.dataType, &dt.defaultValue, &dt.nullable)
 		if err != nil {
-			//TODO: add error return
-			fmt.Println(err)
-			return
+			return err
 		}
 
 		dts[dt.columnName] = &dbColumn{
@@ -133,11 +137,13 @@ func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *
 		}
 	}
 	if len(dts) == 0 {
-		return
+		return nil
 	}
 	dbTable := dbTable{columns: dts}
 	table.Migrated = true
 	checkFields(conn, dbTable, table, dataMap, sql)
+
+	return nil
 }
 
 func primaryKeyIsForeignKey(table *goe.TableMigrate, attName string) bool {
@@ -240,7 +246,7 @@ type databaseIndex struct {
 	migrated  bool
 }
 
-func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *pgxpool.Pool) {
+func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *pgxpool.Pool) error {
 	sqlQuery := `SELECT DISTINCT ci.relname, i.indisunique as is_unique, c.relname, a.attname FROM pg_index i
 	JOIN pg_attribute a ON i.indexrelid = a.attrelid
 	JOIN pg_class ci ON ci.oid = i.indexrelid
@@ -250,8 +256,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 
 	rows, err := conn.Query(context.Background(), sqlQuery, table.Name)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer rows.Close()
 
@@ -260,8 +265,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 	for rows.Next() {
 		err = rows.Scan(&di.indexName, &di.unique, &di.table, &di.attname)
 		if err != nil {
-			fmt.Println(err)
-			return
+			return err
 		}
 		dis[di.indexName] = &databaseIndex{
 			indexName: di.indexName,
@@ -292,6 +296,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 			}
 		}
 	}
+	return nil
 }
 
 func createIndex(index goe.IndexMigrate, table string) string {

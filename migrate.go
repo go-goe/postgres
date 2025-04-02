@@ -185,7 +185,9 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 		if tb.Migrated {
 			t.createAttrs = append(t.createAttrs, foreingOneToOne(att, dataMap))
 		} else {
-			createTable(tb, dataMap, sql, tables)
+			if tb != tbl {
+				createTable(tb, dataMap, sql, tables)
+			}
 			t.createAttrs = append(t.createAttrs, foreingOneToOne(att, dataMap))
 		}
 	}
@@ -195,7 +197,9 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 		if tb.Migrated {
 			t.createAttrs = append(t.createAttrs, foreingManyToOne(att, dataMap))
 		} else {
-			createTable(tb, dataMap, sql, tables)
+			if tb != tbl {
+				createTable(tb, dataMap, sql, tables)
+			}
 			t.createAttrs = append(t.createAttrs, foreingManyToOne(att, dataMap))
 		}
 	}

@@ -154,6 +154,12 @@ func primaryKeyIsForeignKey(table *goe.TableMigrate, attName string) bool {
 	})
 }
 
+func foreignKeyIsPrimarykey(table *goe.TableMigrate, attName string) bool {
+	return slices.ContainsFunc(table.PrimaryKeys, func(pk goe.PrimaryKeyMigrate) bool {
+		return pk.Name == attName
+	})
+}
+
 func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, tables map[string]*goe.TableMigrate) {
 	t := table{}
 	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingName)
@@ -364,11 +370,11 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 		if column, exist := dbTable.columns[att.Name]; exist {
 			// change from many to one to one to one
 			if _, unique := checkFkUnique(conn, table.Name, att.Name); !unique {
-				if primaryKeyIsForeignKey(table, att.Name) {
+				if foreignKeyIsPrimarykey(table, att.Name) {
 					continue
 				}
 				c := fmt.Sprintf("%v_%v_key", table.Name, column.columnName)
-				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v UNIQUE (%v)\n",
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v UNIQUE (%v);\n",
 					table.EscapingName,
 					keywordHandler(c),
 					att.EscapingName))
@@ -386,7 +392,7 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 		if column, exist := dbTable.columns[att.Name]; exist {
 			// change from one to one to many to one
 			if c, unique := checkFkUnique(conn, table.Name, att.Name); unique {
-				sql.WriteString(fmt.Sprintf("ALTER TABLE %v DROP CONSTRAINT %v\n", table.EscapingName, keywordHandler(c)))
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v DROP CONSTRAINT %v;\n", table.EscapingName, keywordHandler(c)))
 			}
 			if column.nullable != att.Nullable {
 				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))

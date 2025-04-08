@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/go-goe/goe"
+	"github.com/go-goe/goe/model"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/olauro/goe"
-	"github.com/olauro/goe/model"
 )
 
 type Driver struct {

@@ -6,10 +6,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-goe/goe"
+	"github.com/go-goe/goe/enum"
+	"github.com/go-goe/goe/model"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/olauro/goe"
-	"github.com/olauro/goe/enum"
-	"github.com/olauro/goe/model"
 )
 
 func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) error {

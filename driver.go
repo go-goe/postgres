@@ -12,43 +12,44 @@ import (
 )
 
 type Driver struct {
-	dns    string
-	sql    *pgxpool.Pool
-	config Config
+	dns string
+	sql *pgxpool.Pool
+	Config
+}
+
+func (d *Driver) GetDatabaseConfig() *goe.DatabaseConfig {
+	return &d.Config.DatabaseConfig
 }
 
 type Config struct {
-	LogQuery bool
+	goe.DatabaseConfig
 }
 
 func Open(dns string, config Config) (driver *Driver) {
 	return &Driver{
 		dns:    dns,
-		config: config,
+		Config: config,
 	}
 }
 
 func (dr *Driver) Init() error {
 	config, err := pgxpool.ParseConfig(dr.dns)
 	if err != nil {
+		// logged by goe
 		return err
 	}
 
 	dr.sql, err = pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
+		// logged by goe
 		return err
 	}
 
-	err = dr.sql.Ping(context.Background())
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return dr.sql.Ping(context.Background())
 }
 
 func (dr *Driver) KeywordHandler(s string) string {
-	return fmt.Sprintf(`"%s"`, s)
+	return keywordHandler(s)
 }
 
 func keywordHandler(s string) string {
@@ -57,10 +58,6 @@ func keywordHandler(s string) string {
 
 func (dr *Driver) Name() string {
 	return "PostgreSQL"
-}
-
-func (dr *Driver) Log(b bool) {
-	dr.config.LogQuery = b
 }
 
 func (dr *Driver) Stats() sql.DBStats {
@@ -83,7 +80,7 @@ func (dr *Driver) Close() error {
 }
 
 func (dr *Driver) NewConnection() goe.Connection {
-	return Connection{sql: dr.sql, config: dr.config}
+	return Connection{sql: dr.sql, config: dr.Config}
 }
 
 type Connection struct {
@@ -91,33 +88,26 @@ type Connection struct {
 	sql    *pgxpool.Pool
 }
 
-func (c Connection) QueryContext(ctx context.Context, query model.Query) (goe.Rows, error) {
-	rows, err := c.sql.Query(ctx, buildSql(&query, c.config.LogQuery), query.Arguments...)
-	if err != nil {
-		return nil, err
-	}
-
-	return Rows{rows: rows}, nil
+func (c Connection) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
+	rows, err := c.sql.Query(ctx, buildSql(query), query.Arguments...)
+	return Rows{rows: rows}, err
 }
 
-func (c Connection) QueryRowContext(ctx context.Context, query model.Query) goe.Row {
-	row := c.sql.QueryRow(ctx, buildSql(&query, c.config.LogQuery), query.Arguments...)
+func (c Connection) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
+	row := c.sql.QueryRow(ctx, buildSql(query), query.Arguments...)
 
 	return Row{row: row}
 }
 
-func (c Connection) ExecContext(ctx context.Context, query model.Query) error {
-	_, err := c.sql.Exec(ctx, buildSql(&query, c.config.LogQuery), query.Arguments...)
+func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
+	_, err := c.sql.Exec(ctx, buildSql(query), query.Arguments...)
 
 	return err
 }
 
 func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (goe.Transaction, error) {
 	tx, err := dr.sql.BeginTx(ctx, convertTxOptions(opts))
-	if err != nil {
-		return nil, err
-	}
-	return Transaction{tx: tx, config: dr.config}, nil
+	return Transaction{tx: tx, config: dr.Config}, err
 }
 
 type Transaction struct {
@@ -125,33 +115,39 @@ type Transaction struct {
 	tx     pgx.Tx
 }
 
-func (t Transaction) QueryContext(ctx context.Context, query model.Query) (goe.Rows, error) {
-	rows, err := t.tx.Query(ctx, buildSql(&query, t.config.LogQuery), query.Arguments...)
-	if err != nil {
-		return nil, err
-	}
-
-	return Rows{rows: rows}, nil
+func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
+	rows, err := t.tx.Query(ctx, buildSql(query), query.Arguments...)
+	return Rows{rows: rows}, err
 }
 
-func (t Transaction) QueryRowContext(ctx context.Context, query model.Query) goe.Row {
-	row := t.tx.QueryRow(ctx, buildSql(&query, t.config.LogQuery), query.Arguments...)
+func (t Transaction) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
+	row := t.tx.QueryRow(ctx, buildSql(query), query.Arguments...)
 
 	return Row{row: row}
 }
 
-func (t Transaction) ExecContext(ctx context.Context, query model.Query) error {
-	_, err := t.tx.Exec(ctx, buildSql(&query, t.config.LogQuery), query.Arguments...)
+func (t Transaction) ExecContext(ctx context.Context, query *model.Query) error {
+	_, err := t.tx.Exec(ctx, buildSql(query), query.Arguments...)
 
 	return err
 }
 
 func (t Transaction) Commit() error {
-	return t.tx.Commit(context.Background())
+	err := t.tx.Commit(context.TODO())
+	if err != nil {
+		// goe can't log
+		return t.config.ErrorHandler(context.TODO(), err)
+	}
+	return nil
 }
 
 func (t Transaction) Rollback() error {
-	return t.tx.Rollback(context.Background())
+	err := t.tx.Rollback(context.Background())
+	if err != nil {
+		// goe can't log
+		return t.config.ErrorHandler(context.TODO(), err)
+	}
+	return nil
 }
 
 type Rows struct {

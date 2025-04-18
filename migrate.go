@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/enum"
@@ -50,24 +51,37 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	sql.WriteString(sqlColumns.String())
 
 	if sql.Len() != 0 {
-		return db.NewConnection().ExecContext(ctx, model.Query{Type: enum.RawQuery, RawSql: sql.String()})
+		return db.rawExecContext(ctx, sql.String())
 	}
 	return nil
 }
 
+func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any) error {
+	query := model.Query{Type: enum.RawQuery, RawSql: rawSql, Arguments: args}
+	query.Header.Err = wrapperExec(ctx, db.NewConnection(), &query)
+	if query.Header.Err != nil {
+		return db.GetDatabaseConfig().ErrorQueryHandler(ctx, query)
+	}
+	db.GetDatabaseConfig().InfoHandler(ctx, query)
+	return nil
+}
+
+func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) error {
+	queryStart := time.Now()
+	defer func() { query.Header.QueryDuration = time.Since(queryStart) }()
+	return conn.ExecContext(ctx, query)
+}
+
 func (db *Driver) DropTable(table string) error {
-	sql := fmt.Sprintf("DROP TABLE IF EXISTS %v;", table)
-	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.rawExecContext(context.TODO(), fmt.Sprintf("DROP TABLE IF EXISTS %v;", table))
 }
 
 func (db *Driver) RenameColumn(table, oldColumn, newColumn string) error {
-	sql := renameColumn(table, oldColumn, newColumn)
-	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.rawExecContext(context.TODO(), renameColumn(table, oldColumn, newColumn))
 }
 
 func (db *Driver) DropColumn(table, column string) error {
-	sql := dropColumn(table, column)
-	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.rawExecContext(context.TODO(), dropColumn(table, column))
 }
 
 func renameColumn(table, oldColumnName, newColumnName string) string {

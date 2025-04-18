@@ -2,8 +2,8 @@ package postgres
 
 import (
 	"fmt"
-	"log"
 	"strings"
+	"time"
 
 	"github.com/go-goe/goe/enum"
 	"github.com/go-goe/goe/model"
@@ -41,27 +41,23 @@ var aggregates = map[enum.AggregateType]string{
 	enum.CountAggregate: "COUNT",
 }
 
-func buildSql(query *model.Query, logQuery bool) string {
-	var sql string
+func buildSql(query *model.Query) string {
+	buildStart := time.Now()
 
 	switch query.Type {
 	case enum.SelectQuery:
-		sql = buildSelect(query)
+		query.RawSql = buildSelect(query)
 	case enum.InsertQuery:
-		sql = buildInsert(query)
+		query.RawSql = buildInsert(query)
 	case enum.UpdateQuery:
-		sql = buildUpdate(query)
+		query.RawSql = buildUpdate(query)
 	case enum.DeleteQuery:
-		sql = buildDelete(query)
-	case enum.RawQuery:
-		sql = query.RawSql
+		query.RawSql = buildDelete(query)
 	}
 
-	if logQuery {
-		log.Println("\n" + sql)
-	}
+	query.Header.QueryBuild = time.Since(buildStart)
 
-	return sql
+	return query.RawSql
 }
 
 func buildSelect(query *model.Query) string {

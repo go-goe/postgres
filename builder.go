@@ -1,7 +1,7 @@
 package postgres
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,12 +80,12 @@ func buildSelect(query *model.Query) string {
 
 	for _, j := range query.Joins {
 		builder.WriteByte('\n')
-		builder.WriteString(fmt.Sprintf("%v %v on (%v = %v)",
-			joins[j.JoinOperation],
-			j.Table,
-			(j.FirstArgument.Table + "." + j.FirstArgument.Name),
-			(j.SecondArgument.Table + "." + j.SecondArgument.Name),
-		))
+		builder.WriteString(
+			joins[j.JoinOperation] + " " +
+				j.Table + " on (" +
+				(j.FirstArgument.Table + "." + j.FirstArgument.Name) + " = " +
+				(j.SecondArgument.Table + "." + j.SecondArgument.Name) + ")",
+		)
 	}
 
 	writeWhere(query, &builder)
@@ -101,11 +101,11 @@ func buildSelect(query *model.Query) string {
 
 	if query.Limit != 0 {
 		builder.WriteByte('\n')
-		builder.WriteString(fmt.Sprintf("LIMIT %v", query.Limit))
+		builder.WriteString("LIMIT " + strconv.Itoa(query.Limit))
 	}
 	if query.Offset != 0 {
 		builder.WriteByte('\n')
-		builder.WriteString(fmt.Sprintf("OFFSET %v", query.Offset))
+		builder.WriteString("OFFSET " + strconv.Itoa(query.Offset))
 	}
 
 	return builder.String()
@@ -123,27 +123,27 @@ func buildInsert(query *model.Query) string {
 		builder.WriteByte(',')
 		builder.WriteString(att.Name)
 	}
-	builder.WriteString(")VALUES(")
+	builder.WriteString(")VALUES($")
 
 	i := 1
-	builder.WriteString(fmt.Sprintf("$%v", i))
+	builder.WriteString(strconv.Itoa(i))
 
 	for range query.SizeArguments - 1 {
 		i++
 		builder.WriteByte(',')
-		builder.WriteString(fmt.Sprintf("$%v", i))
+		builder.WriteString(",$" + strconv.Itoa(i))
 	}
 	builder.WriteByte(')')
 
 	for range query.BatchSizeQuery - 1 {
 		i++
 		builder.WriteString(",(")
-		builder.WriteString(fmt.Sprintf("$%v", i))
+		builder.WriteString(",$" + strconv.Itoa(i))
 
 		for range query.SizeArguments - 1 {
 			i++
 			builder.WriteByte(',')
-			builder.WriteString(fmt.Sprintf("$%v", i))
+			builder.WriteString(",$" + strconv.Itoa(i))
 		}
 		builder.WriteByte(')')
 	}
@@ -164,15 +164,10 @@ func buildUpdate(query *model.Query) string {
 	builder.WriteString("SET")
 
 	i := 1
-	builder.WriteString(query.Attributes[0].Name)
-	builder.WriteByte('=')
-	builder.WriteString(fmt.Sprintf("$%v", i))
+	builder.WriteString(query.Attributes[0].Name + "=$" + strconv.Itoa(i))
 	for _, att := range query.Attributes[1:] {
 		i++
-		builder.WriteByte(',')
-		builder.WriteString(att.Name)
-		builder.WriteByte('=')
-		builder.WriteString(fmt.Sprintf("$%v", i))
+		builder.WriteString("," + att.Name + "=$" + strconv.Itoa(i))
 	}
 
 	writeWhere(query, &builder)
@@ -192,11 +187,11 @@ func buildDelete(query *model.Query) string {
 
 func writeAttributes(a model.Attribute) string {
 	if a.FunctionType != 0 {
-		return fmt.Sprintf(" %v(%v)", functions[a.FunctionType], a.Table+"."+a.Name)
+		return " " + functions[a.FunctionType] + "(" + a.Table + "." + a.Name + ")"
 	}
 
 	if a.AggregateType != 0 {
-		return fmt.Sprintf(" %v(%v)", aggregates[a.AggregateType], a.Table+"."+a.Name)
+		return " " + aggregates[a.AggregateType] + "(" + a.Table + "." + a.Name + ")"
 	}
 
 	return a.Table + "." + a.Name
@@ -210,27 +205,27 @@ func writeWhere(query *model.Query, builder *strings.Builder) {
 		for _, w := range query.WhereOperations {
 			switch w.Type {
 			case enum.OperationWhere:
-				builder.WriteString(fmt.Sprintf("%v %v $%v", writeAttributes(w.Attribute), operators[w.Operator], query.WhereIndex))
+				builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " $" + strconv.Itoa(query.WhereIndex))
 				query.WhereIndex++
 			case enum.OperationIsWhere:
-				builder.WriteString(fmt.Sprintf("%v %v NULL", writeAttributes(w.Attribute), operators[w.Operator]))
+				builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " NULL")
 			case enum.OperationAttributeWhere:
-				builder.WriteString(fmt.Sprintf("%v %v %v", writeAttributes(w.Attribute), operators[w.Operator], writeAttributes(w.AttributeValue)))
+				builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " " + writeAttributes(w.AttributeValue))
 			case enum.OperationInWhere:
 				if w.QueryIn != nil {
 					if w.QueryIn.Arguments != nil {
 						w.QueryIn.WhereIndex = query.WhereIndex
 						query.Arguments = append(query.Arguments[:w.QueryIn.WhereIndex-1], append(w.QueryIn.Arguments, query.Arguments[w.QueryIn.WhereIndex-1:]...)...)
-						builder.WriteString(fmt.Sprintf("%v %v (%v)", writeAttributes(w.Attribute), operators[w.Operator], buildSelect(w.QueryIn)))
+						builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn) + ")")
 						query.WhereIndex = w.QueryIn.WhereIndex
 						continue
 					}
-					builder.WriteString(fmt.Sprintf("%v %v (%v)", writeAttributes(w.Attribute), operators[w.Operator], buildSelect(w.QueryIn)))
+					builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn) + ")")
 					continue
 				}
 				writeWhereInArgument(&w, builder, query)
 			case enum.LogicalWhere:
-				builder.WriteString(fmt.Sprintf(" %v ", operators[w.Operator]))
+				builder.WriteString(" " + operators[w.Operator] + " ")
 			}
 		}
 	}
@@ -240,10 +235,10 @@ func writeWhereInArgument(where *model.Where, builder *strings.Builder, query *m
 	if where.SizeIn == 0 {
 		return
 	}
-	builder.WriteString(fmt.Sprintf("%v %v ($%v", writeAttributes(where.Attribute), operators[where.Operator], query.WhereIndex))
+	builder.WriteString(writeAttributes(where.Attribute) + " " + operators[where.Operator] + " " + "($" + strconv.Itoa(query.WhereIndex))
 	query.WhereIndex++
 	for range where.SizeIn - 1 {
-		builder.WriteString(fmt.Sprintf(",$%v", query.WhereIndex))
+		builder.WriteString(",$" + strconv.Itoa(query.WhereIndex))
 		query.WhereIndex++
 	}
 	builder.WriteByte(')')

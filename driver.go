@@ -89,18 +89,21 @@ type Connection struct {
 }
 
 func (c Connection) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
-	rows, err := c.sql.Query(ctx, buildSql(query), query.Arguments...)
+	buildSql(query)
+	rows, err := c.sql.Query(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
 func (c Connection) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
-	row := c.sql.QueryRow(ctx, buildSql(query), query.Arguments...)
+	buildSql(query)
+	row := c.sql.QueryRow(ctx, query.RawSql, query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
-	_, err := c.sql.Exec(ctx, buildSql(query), query.Arguments...)
+	buildSql(query)
+	_, err := c.sql.Exec(ctx, query.RawSql, query.Arguments...)
 
 	return err
 }
@@ -116,18 +119,21 @@ type Transaction struct {
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
-	rows, err := t.tx.Query(ctx, buildSql(query), query.Arguments...)
+	buildSql(query)
+	rows, err := t.tx.Query(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
 func (t Transaction) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
-	row := t.tx.QueryRow(ctx, buildSql(query), query.Arguments...)
+	buildSql(query)
+	row := t.tx.QueryRow(ctx, query.RawSql, query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (t Transaction) ExecContext(ctx context.Context, query *model.Query) error {
-	_, err := t.tx.Exec(ctx, buildSql(query), query.Arguments...)
+	buildSql(query)
+	_, err := t.tx.Exec(ctx, query.RawSql, query.Arguments...)
 
 	return err
 }

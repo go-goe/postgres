@@ -120,13 +120,14 @@ func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *
 	when data_type = 'integer' then case WHEN column_default like 'nextval%' THEN 'serial' ELSE data_type end
 	when data_type = 'bigint' then case WHEN column_default like 'nextval%' THEN 'bigserial' ELSE data_type end
 	when data_type like 'timestamp%' then 'timestamp'
+	when data_type like 'numeric' then CONCAT('decimal', '(',numeric_precision, ',', numeric_scale, ')')
 	ELSE data_type END, 
 	column_default,
 	CASE
 	WHEN is_nullable = 'YES'
 	THEN True
 	ELSE False END AS is_nullable
-	FROM information_schema.columns WHERE table_name = $1;	
+	FROM information_schema.columns WHERE table_name = $1;
 	`
 
 	rows, err := conn.Query(context.Background(), sqlTableInfos, table.Name)

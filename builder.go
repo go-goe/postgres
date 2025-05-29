@@ -123,19 +123,16 @@ func buildInsert(query *model.Query) string {
 
 	for range query.SizeArguments - 1 {
 		i++
-		builder.WriteByte(',')
 		builder.WriteString(",$" + strconv.Itoa(i))
 	}
 	builder.WriteByte(')')
 
 	for range query.BatchSizeQuery - 1 {
 		i++
-		builder.WriteString(",(")
-		builder.WriteString(",$" + strconv.Itoa(i))
+		builder.WriteString(",($" + strconv.Itoa(i))
 
 		for range query.SizeArguments - 1 {
 			i++
-			builder.WriteByte(',')
 			builder.WriteString(",$" + strconv.Itoa(i))
 		}
 		builder.WriteByte(')')

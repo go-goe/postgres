@@ -65,17 +65,17 @@ func buildSelect(query *model.Query) string {
 	}
 
 	builder.WriteString("FROM")
-	builder.WriteString(query.Tables[0])
+	builder.WriteString(query.Tables[0].String())
 	for _, t := range query.Tables[1:] {
 		builder.WriteByte(',')
-		builder.WriteString(t)
+		builder.WriteString(t.String())
 	}
 
 	for _, j := range query.Joins {
 		builder.WriteByte('\n')
 		builder.WriteString(
 			joins[j.JoinOperation] + " " +
-				j.Table + " on (" +
+				j.Table.String() + " on (" +
 				(j.FirstArgument.Table + "." + j.FirstArgument.Name) + " = " +
 				(j.SecondArgument.Table + "." + j.SecondArgument.Name) + ")",
 		)
@@ -108,7 +108,7 @@ func buildInsert(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("INSERT INTO")
-	builder.WriteString(query.Tables[0])
+	builder.WriteString(query.Tables[0].String())
 	builder.WriteByte('(')
 
 	builder.WriteString(query.Attributes[0].Name)
@@ -150,7 +150,7 @@ func buildUpdate(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("UPDATE")
-	builder.WriteString(query.Tables[0])
+	builder.WriteString(query.Tables[0].String())
 	builder.WriteString("SET")
 
 	i := 1
@@ -169,7 +169,7 @@ func buildDelete(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("DELETE FROM")
-	builder.WriteString(query.Tables[0])
+	builder.WriteString(query.Tables[0].String())
 	writeWhere(query, &builder)
 
 	return builder.String()

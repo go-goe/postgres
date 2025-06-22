@@ -78,18 +78,24 @@ func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) e
 	return conn.ExecContext(ctx, query)
 }
 
-func (db *Driver) DropTable(table string) error {
-	//TODO: add scheme
+func (db *Driver) DropTable(scheme, table string) error {
+	if len(scheme) > 2 {
+		table = scheme + "." + table
+	}
 	return db.rawExecContext(context.TODO(), fmt.Sprintf("DROP TABLE IF EXISTS %v;", table))
 }
 
-func (db *Driver) RenameColumn(table, oldColumn, newColumn string) error {
-	//TODO: add scheme
+func (db *Driver) RenameColumn(scheme, table, oldColumn, newColumn string) error {
+	if len(scheme) > 2 {
+		table = scheme + "." + table
+	}
 	return db.rawExecContext(context.TODO(), renameColumn(table, oldColumn, newColumn))
 }
 
-func (db *Driver) DropColumn(table, column string) error {
-	//TODO: add scheme
+func (db *Driver) DropColumn(scheme, table, column string) error {
+	if len(scheme) > 2 {
+		table = scheme + "." + table
+	}
 	return db.rawExecContext(context.TODO(), dropColumn(table, column))
 }
 

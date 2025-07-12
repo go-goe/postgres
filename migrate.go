@@ -30,9 +30,14 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	sql := new(strings.Builder)
 	sqlColumns := new(strings.Builder)
 	schemes := strings.Builder{}
-	var err error
+	dbSchemes, err := getSchemes(db.sql)
+	if err != nil {
+		return err
+	}
 	for _, s := range migrator.Schemes {
-		schemes.WriteString(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %v;\n", s))
+		if !slices.Contains(dbSchemes, s[1:len(s)-1]) {
+			schemes.WriteString(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %v;\n", s))
+		}
 	}
 
 	for _, t := range migrator.Tables {
@@ -60,6 +65,28 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 		return db.rawExecContext(ctx, schemes.String())
 	}
 	return nil
+}
+
+func getSchemes(conn *pgxpool.Pool) ([]string, error) {
+	rows, err := conn.Query(context.Background(), `
+		SELECT nspname
+		FROM pg_namespace
+		WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema';
+	`)
+	if err != nil {
+		return nil, err
+	}
+
+	var s string
+	schemes := make([]string, 0)
+	for rows.Next() {
+		err = rows.Scan(&s)
+		if err != nil {
+			return nil, err
+		}
+		schemes = append(schemes, s)
+	}
+	return schemes, nil
 }
 
 func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any) error {
@@ -207,13 +234,13 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 
 	for _, att := range tbl.Attributes {
 		att.DataType = checkDataType(att.DataType, dataMap)
-		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v,", att.EscapingName, att.DataType, func() string {
+		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v %v,", att.EscapingName, att.DataType, func() string {
 			if att.Nullable {
 				return "NULL"
 			} else {
 				return "NOT NULL"
 			}
-		}()))
+		}(), setDefault(att.Default)))
 	}
 
 	for _, att := range tbl.OneToOnes {
@@ -247,6 +274,14 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 	}
 	t.createPk += ")"
 	createTableSql(t.name, t.createPk, t.createAttrs, sql)
+}
+
+func setDefault(d string) string {
+	if d == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("DEFAULT %v", d)
 }
 
 func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) string {
@@ -390,6 +425,33 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 			}
 			if column.nullable != att.Nullable {
 				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
+			}
+			if column.defaultValue != nil {
+				if att.Default == "" {
+					// drop default
+					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP DEFAULT;",
+						table.EscapingTableName(),
+						att.EscapingName,
+					))
+					continue
+				}
+				if *column.defaultValue != att.Default {
+					// update default
+					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
+						table.EscapingTableName(),
+						att.EscapingName,
+						att.Default,
+					))
+					continue
+				}
+			}
+			if att.Default != "" && column.defaultValue == nil {
+				// create default
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
+					table.EscapingTableName(),
+					att.EscapingName,
+					att.Default,
+				))
 			}
 			continue
 		}

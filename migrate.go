@@ -29,14 +29,14 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 
 	sql := new(strings.Builder)
 	sqlColumns := new(strings.Builder)
-	schemes := strings.Builder{}
-	dbSchemes, err := getSchemes(db.sql)
+	schemas := strings.Builder{}
+	dbSchemas, err := getSchemas(db.sql)
 	if err != nil {
 		return err
 	}
-	for _, s := range migrator.Schemes {
-		if !slices.Contains(dbSchemes, s[1:len(s)-1]) {
-			schemes.WriteString(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %v;\n", s))
+	for _, s := range migrator.Schemas {
+		if !slices.Contains(dbSchemas, s[1:len(s)-1]) {
+			schemas.WriteString(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %v;\n", s))
 		}
 	}
 
@@ -61,13 +61,13 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	sql.WriteString(sqlColumns.String())
 
 	if sql.Len() != 0 {
-		schemes.WriteString(sql.String())
-		return db.rawExecContext(ctx, schemes.String())
+		schemas.WriteString(sql.String())
+		return db.rawExecContext(ctx, schemas.String())
 	}
 	return nil
 }
 
-func getSchemes(conn *pgxpool.Pool) ([]string, error) {
+func getSchemas(conn *pgxpool.Pool) ([]string, error) {
 	rows, err := conn.Query(context.Background(), `
 		SELECT nspname
 		FROM pg_namespace
@@ -78,15 +78,15 @@ func getSchemes(conn *pgxpool.Pool) ([]string, error) {
 	}
 
 	var s string
-	schemes := make([]string, 0)
+	schemas := make([]string, 0)
 	for rows.Next() {
 		err = rows.Scan(&s)
 		if err != nil {
 			return nil, err
 		}
-		schemes = append(schemes, s)
+		schemas = append(schemas, s)
 	}
-	return schemes, nil
+	return schemas, nil
 }
 
 func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any) error {
@@ -105,23 +105,23 @@ func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) e
 	return conn.ExecContext(ctx, query)
 }
 
-func (db *Driver) DropTable(scheme, table string) error {
-	if len(scheme) > 2 {
-		table = scheme + "." + table
+func (db *Driver) DropTable(schema, table string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
 	}
 	return db.rawExecContext(context.TODO(), fmt.Sprintf("DROP TABLE IF EXISTS %v;", table))
 }
 
-func (db *Driver) RenameColumn(scheme, table, oldColumn, newColumn string) error {
-	if len(scheme) > 2 {
-		table = scheme + "." + table
+func (db *Driver) RenameColumn(schema, table, oldColumn, newColumn string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
 	}
 	return db.rawExecContext(context.TODO(), renameColumn(table, oldColumn, newColumn))
 }
 
-func (db *Driver) DropColumn(scheme, table, column string) error {
-	if len(scheme) > 2 {
-		table = scheme + "." + table
+func (db *Driver) DropColumn(schema, table, column string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
 	}
 	return db.rawExecContext(context.TODO(), dropColumn(table, column))
 }

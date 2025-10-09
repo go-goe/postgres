@@ -130,6 +130,14 @@ func (db *Driver) DropTable(schema, table string) error {
 	return db.rawExecContext(context.TODO(), fmt.Sprintf("DROP TABLE IF EXISTS %v;", table))
 }
 
+func (db *Driver) RenameTable(schema, table, newTable string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
+		newTable = schema + "." + newTable
+	}
+	return db.rawExecContext(context.TODO(), fmt.Sprintf("ALTER TABLE %v RENAME TO %v;", table, newTable))
+}
+
 func (db *Driver) RenameColumn(schema, table, oldColumn, newColumn string) error {
 	if len(schema) > 2 {
 		table = schema + "." + table

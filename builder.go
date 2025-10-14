@@ -38,6 +38,10 @@ var functions = map[enum.FunctionType]string{
 
 var aggregates = map[enum.AggregateType]string{
 	enum.CountAggregate: "COUNT",
+	enum.MaxAggregate:   "MAX",
+	enum.MinAggregate:   "MIN",
+	enum.SumAggregate:   "SUM",
+	enum.AvgAggregate:   "AVG",
 }
 
 func buildSql(query *model.Query) {

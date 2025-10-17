@@ -481,7 +481,7 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 			}
 			continue
 		}
-		sql.WriteString(addColumn(table, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
 	}
 
 	for _, att := range table.OneToOnes {
@@ -517,7 +517,7 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 			}
 			continue
 		}
-		sql.WriteString(addColumn(table, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
 		sql.WriteString(addFkManyToOne(table, att))
 	}
 }
@@ -536,7 +536,7 @@ func checkFkUnique(conn *pgxpool.Pool, table, attribute string) (string, bool) {
 	return s, b
 }
 
-func addColumn(table *goe.TableMigrate, column, dataType string, nullable bool) string {
+func addColumn(table, column, dataType string, nullable bool) string {
 	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table, column, dataType,
 		func() string {
 			if nullable {

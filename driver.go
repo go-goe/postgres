@@ -82,8 +82,8 @@ func (dr *Driver) Close() error {
 }
 
 var errMap = map[string][]error{
-	"23505": []error{goe.ErrBadRequest, goe.ErrUniqueValue},
-	"23503": []error{goe.ErrBadRequest, goe.ErrForeignKey},
+	"23505": {goe.ErrBadRequest, goe.ErrUniqueValue},
+	"23503": {goe.ErrBadRequest, goe.ErrForeignKey},
 }
 
 type wrapErrors struct {

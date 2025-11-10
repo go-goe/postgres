@@ -8,6 +8,7 @@ import (
 	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/model"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -78,6 +79,33 @@ func (dr *Driver) Stats() sql.DBStats {
 func (dr *Driver) Close() error {
 	dr.sql.Close()
 	return nil
+}
+
+var errMap = map[string][]error{
+	"23505": []error{goe.ErrBadRequest, goe.ErrUniqueValue},
+	"23503": []error{goe.ErrBadRequest, goe.ErrForeignKey},
+}
+
+type wrapErrors struct {
+	msg  string
+	errs []error
+}
+
+func (e *wrapErrors) Error() string {
+	return "goe: " + e.msg
+}
+
+func (e *wrapErrors) Unwrap() []error {
+	return e.errs
+}
+
+func (dr *Driver) ErrorTranslator() func(err error) error {
+	return func(err error) error {
+		if pgError, ok := err.(*pgconn.PgError); ok {
+			return &wrapErrors{msg: err.Error(), errs: append(errMap[pgError.Code], err)}
+		}
+		return err
+	}
 }
 
 func (dr *Driver) NewConnection() goe.Connection {

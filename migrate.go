@@ -15,18 +15,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type dataType struct {
+	typeName  string
+	zeroValue string
+}
+
 func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) error {
-	dataMap := map[string]string{
-		"string":    "text",
-		"int16":     "smallint",
-		"int32":     "integer",
-		"int64":     "bigint",
-		"float32":   "real",
-		"float64":   "double precision",
-		"[]uint8":   "bytea",
-		"time.Time": "timestamp",
-		"bool":      "boolean",
-		"uuid.UUID": "uuid",
+	dataMap := map[string]dataType{
+		"string":    {"text", "''"},
+		"int16":     {"smallint", "0"},
+		"int32":     {"integer", "0"},
+		"int64":     {"bigint", "0"},
+		"float32":   {"real", "0"},
+		"float64":   {"double precision", "0"},
+		"[]uint8":   {"bytea", "''"},
+		"time.Time": {"timestamp", "to_timestamp(0)"},
+		"bool":      {"boolean", "false"},
+		"uuid.UUID": {"uuid", "'00000000-0000-0000-0000-000000000000'"},
 	}
 
 	sql := new(strings.Builder)
@@ -180,7 +185,7 @@ type dbTable struct {
 	columns map[string]*dbColumn
 }
 
-func checkTableChanges(table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, conn *pgxpool.Pool) error {
+func checkTableChanges(table *goe.TableMigrate, dataMap map[string]dataType, sql *strings.Builder, conn *pgxpool.Pool) error {
 	sqlTableInfos := `SELECT
 	column_name, CASE 
 	WHEN data_type = 'character varying' 
@@ -243,14 +248,14 @@ func foreignKeyIsPrimarykey(table *goe.TableMigrate, attName string) bool {
 	})
 }
 
-func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, tables map[string]*goe.TableMigrate) {
+func createTable(tbl *goe.TableMigrate, dataMap map[string]dataType, sql *strings.Builder, tables map[string]*goe.TableMigrate) {
 	t := table{}
 	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingTableName())
 	for _, att := range tbl.PrimaryKeys {
 		if primaryKeyIsForeignKey(tbl, att.Name) {
 			continue
 		}
-		att.DataType = checkDataType(att.DataType, dataMap)
+		att.DataType = checkDataType(att.DataType, dataMap).typeName
 		if att.AutoIncrement {
 			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, checkTypeAutoIncrement(att.DataType)))
 		} else {
@@ -259,7 +264,7 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 	}
 
 	for _, att := range tbl.Attributes {
-		att.DataType = checkDataType(att.DataType, dataMap)
+		att.DataType = checkDataType(att.DataType, dataMap).typeName
 		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v %v,", att.EscapingName, att.DataType, func() string {
 			if att.Nullable {
 				return "NULL"
@@ -310,8 +315,8 @@ func setDefault(d string) string {
 	return fmt.Sprintf("DEFAULT %v", d)
 }
 
-func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) string {
-	att.DataType = checkDataType(att.DataType, dataMap)
+func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]dataType) string {
+	att.DataType = checkDataType(att.DataType, dataMap).typeName
 	return fmt.Sprintf("%v %v %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
 		if att.Nullable {
 			return "NULL"
@@ -320,8 +325,8 @@ func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) strin
 	}(), att.EscapingTargetTableName(), att.EscapingTargetColumn)
 }
 
-func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string {
-	att.DataType = checkDataType(att.DataType, dataMap)
+func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]dataType) string {
+	att.DataType = checkDataType(att.DataType, dataMap).typeName
 	return fmt.Sprintf("%v %v UNIQUE %v REFERENCES %v(%v),",
 		att.EscapingName,
 		att.DataType,
@@ -420,24 +425,24 @@ func createIndex(index goe.IndexMigrate, table *goe.TableMigrate) string {
 	)
 }
 
-func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder) {
+func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, dataMap map[string]dataType, sql *strings.Builder) {
 	for _, att := range table.PrimaryKeys {
 		if column := dbTable.columns[att.Name]; column != nil {
 			if primaryKeyIsForeignKey(table, att.Name) {
 				continue
 			}
 
-			dataType := checkDataType(att.DataType, dataMap)
+			dataType := checkDataType(att.DataType, dataMap).typeName
 			if att.AutoIncrement {
 				dataType = checkTypeAutoIncrement(dataType)
 			}
 			if column.dataType != dataType {
 				if att.AutoIncrement {
-					sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, fmt.Sprintf("%v USING %v::%v", checkTypeAutoIncrement(dataType), att.EscapingName, checkTypeAutoIncrement(dataType)), dataMap))
+					sql.WriteString(alterColumn(table, att.EscapingName, fmt.Sprintf("%v USING %v::%v", checkTypeAutoIncrement(dataType), att.EscapingName, checkTypeAutoIncrement(dataType)), dataMap))
 					sql.WriteString(fmt.Sprintf("CREATE SEQUENCE %v_%v_seq OWNED BY %v.%v;\n", table.Name, att.Name, table.Name, att.Name))
-					sql.WriteString(alterColumnDefault(table.EscapingName, att.EscapingName, fmt.Sprintf("nextval('%v_%v_seq'::regclass)", table.Name, att.Name)))
+					sql.WriteString(alterColumnDefault(table, att.EscapingName, fmt.Sprintf("nextval('%v_%v_seq'::regclass)", table.Name, att.Name)))
 				} else {
-					sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, dataType, dataMap))
+					sql.WriteString(alterColumn(table, att.EscapingName, dataType, dataMap))
 				}
 			}
 		}
@@ -445,12 +450,12 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 
 	for _, att := range table.Attributes {
 		if column, exist := dbTable.columns[att.Name]; exist {
-			dataType := checkDataType(att.DataType, dataMap)
+			dataType := checkDataType(att.DataType, dataMap).typeName
 			if column.dataType != dataType {
-				sql.WriteString(alterColumn(table.EscapingName, att.EscapingName, dataType, dataMap))
+				sql.WriteString(alterColumn(table, att.EscapingName, dataType, dataMap))
 			}
 			if column.nullable != att.Nullable {
-				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
+				sql.WriteString(nullableColumn(table, att.EscapingName, att.Nullable))
 			}
 			if column.defaultValue != nil {
 				if att.Default == "" {
@@ -481,7 +486,13 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 			}
 			continue
 		}
-		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		dt := checkDataType(att.DataType, dataMap)
+		if att.Default != "" {
+			dt.zeroValue = att.Default
+			sql.WriteString(addColumn(table, att.EscapingName, dt, att.Nullable, false))
+			continue
+		}
+		sql.WriteString(addColumn(table, att.EscapingName, dt, att.Nullable, true))
 	}
 
 	for _, att := range table.OneToOnes {
@@ -498,11 +509,11 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 					att.EscapingName))
 			}
 			if column.nullable != att.Nullable {
-				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
+				sql.WriteString(nullableColumn(table, att.EscapingName, att.Nullable))
 			}
 			continue
 		}
-		sql.WriteString(addColumnUnique(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		sql.WriteString(addColumnUnique(table, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
 		sql.WriteString(addFkOneToOne(table, att))
 	}
 
@@ -513,11 +524,45 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 				sql.WriteString(fmt.Sprintf("ALTER TABLE %v DROP CONSTRAINT %v;\n", table.EscapingTableName(), keywordHandler(c)))
 			}
 			if column.nullable != att.Nullable {
-				sql.WriteString(nullableColumn(table.EscapingName, att.EscapingName, att.Nullable))
+				sql.WriteString(nullableColumn(table, att.EscapingName, att.Nullable))
+			}
+			if column.defaultValue != nil {
+				if att.Default == "" {
+					// drop default
+					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP DEFAULT;",
+						table.EscapingTableName(),
+						att.EscapingName,
+					))
+					continue
+				}
+				if *column.defaultValue != att.Default {
+					// update default
+					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
+						table.EscapingTableName(),
+						att.EscapingName,
+						att.Default,
+					))
+					continue
+				}
+			}
+			if att.Default != "" && column.defaultValue == nil {
+				// create default
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
+					table.EscapingTableName(),
+					att.EscapingName,
+					att.Default,
+				))
 			}
 			continue
 		}
-		sql.WriteString(addColumn(table.EscapingName, att.EscapingName, checkDataType(att.DataType, dataMap), att.Nullable))
+		dt := checkDataType(att.DataType, dataMap)
+		if att.Default != "" {
+			dt.zeroValue = att.Default
+			sql.WriteString(addColumn(table, att.EscapingName, dt, att.Nullable, false))
+			sql.WriteString(addFkManyToOne(table, att))
+			continue
+		}
+		sql.WriteString(addColumn(table, att.EscapingName, dt, att.Nullable, true))
 		sql.WriteString(addFkManyToOne(table, att))
 	}
 }
@@ -536,30 +581,30 @@ func checkFkUnique(conn *pgxpool.Pool, table, attribute string) (string, bool) {
 	return s, b
 }
 
-func addColumn(table, column, dataType string, nullable bool) string {
-	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table, column, dataType,
-		func() string {
-			if nullable {
-				return "NULL"
-			}
-			return "NOT NULL"
-		}())
+func addColumn(table *goe.TableMigrate, column string, dataType dataType, nullable bool, dropDefault bool) string {
+	if nullable {
+		return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v NULL;\n", table.EscapingTableName(), column, dataType.typeName)
+	}
+	if dropDefault {
+		return fmt.Sprintf("ALTER TABLE %[1]v ADD COLUMN %[2]v %[3]v NOT NULL DEFAULT %[4]v;\n ALTER TABLE %[1]v ALTER COLUMN %[2]v DROP DEFAULT;\n",
+			table.EscapingTableName(), column, dataType.typeName, dataType.zeroValue)
+	}
+	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v NOT NULL DEFAULT %v;\n",
+		table.EscapingTableName(), column, dataType.typeName, dataType.zeroValue)
 }
 
-func addColumnUnique(table, column, dataType string, nullable bool) string {
-	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v UNIQUE %v;\n", table, column, dataType,
-		func() string {
-			if nullable {
-				return "NULL"
-			}
-			return "NOT NULL"
-		}())
+func addColumnUnique(table *goe.TableMigrate, column string, dataType dataType, nullable bool) string {
+	if nullable {
+		return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v UNIQUE NULL;\n", table.EscapingTableName(), column, dataType)
+	}
+	return fmt.Sprintf("ALTER TABLE %[1]v ADD COLUMN %[2]v %[3]v UNIQUE NOT NULL DEFAULT %[4]v;\n ALTER TABLE %[1]v ALTER COLUMN %[2]v DROP DEFAULT;\n",
+		table.EscapingTableName(), column, dataType.typeName, dataType.zeroValue)
 }
 
 func addFkManyToOne(table *goe.TableMigrate, att goe.ManyToOneMigrate) string {
 	c := keywordHandler(fmt.Sprintf("fk_%v_%v", table.Name, att.Name))
 	return fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v FOREIGN KEY (%v) REFERENCES %v (%v);\n",
-		table.EscapingName,
+		table.EscapingTableName(),
 		c,
 		att.EscapingName,
 		att.EscapingTargetTableName(),
@@ -569,26 +614,47 @@ func addFkManyToOne(table *goe.TableMigrate, att goe.ManyToOneMigrate) string {
 func addFkOneToOne(table *goe.TableMigrate, att goe.OneToOneMigrate) string {
 	c := keywordHandler(fmt.Sprintf("fk_%v_%v", table.Name, att.Name))
 	return fmt.Sprintf("ALTER TABLE %v ADD CONSTRAINT %v FOREIGN KEY (%v) REFERENCES %v (%v);\n",
-		table.EscapingName,
+		table.EscapingTableName(),
 		c,
 		att.EscapingName,
 		att.EscapingTargetTableName(),
 		att.EscapingTargetColumn)
 }
 
-func checkDataType(structDataType string, dataMap map[string]string) string {
+func checkDataType(structDataType string, dataMap map[string]dataType) dataType {
+	dt := dataType{typeName: structDataType}
 	switch structDataType {
 	case "int8", "uint8", "uint16":
-		structDataType = "int16"
+		dt = dataType{"int16", "0"}
 	case "int", "uint", "uint32":
-		structDataType = "int32"
+		dt = dataType{"int32", "0"}
 	case "uint64":
-		structDataType = "int64"
+		dt = dataType{"int64", "0"}
 	}
-	if dataMap[structDataType] != "" {
-		structDataType = dataMap[structDataType]
+
+	if dt, ok := dataMap[dt.typeName]; ok {
+		return dt
 	}
-	return structDataType
+
+	for _, s := range []string{"number", "numeric", "decimal"} {
+		if strings.Contains(strings.ToLower(structDataType), s) {
+			return dataType{structDataType, "0"}
+		}
+	}
+
+	for _, s := range []string{"date", "time"} {
+		if strings.Contains(strings.ToLower(structDataType), s) {
+			return dataType{structDataType, "0000-01-01"}
+		}
+	}
+
+	for _, s := range []string{"char", "varchar", "text"} {
+		if strings.Contains(strings.ToLower(structDataType), s) {
+			return dataType{structDataType, "''"}
+		}
+	}
+
+	return dt
 }
 
 func checkTypeAutoIncrement(structDataType string) string {
@@ -603,20 +669,20 @@ func checkTypeAutoIncrement(structDataType string) string {
 	return dataMap[structDataType]
 }
 
-func alterColumn(table, column, dataType string, dataMap map[string]string) string {
-	if dataMap[dataType] == "" {
-		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v TYPE %v;\n", table, column, dataType)
+func alterColumn(table *goe.TableMigrate, column, dataType string, dataMap map[string]dataType) string {
+	if dt, ok := dataMap[dataType]; ok {
+		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v TYPE %v;\n", table.EscapingTableName(), column, dt.typeName)
 	}
-	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v TYPE %v;\n", table, column, dataMap[dataType])
+	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v TYPE %v;\n", table.EscapingTableName(), column, dataType)
 }
 
-func alterColumnDefault(table, column, defa string) string {
-	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;\n", table, column, defa)
+func alterColumnDefault(table *goe.TableMigrate, column, defa string) string {
+	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;\n", table.EscapingTableName(), column, defa)
 }
 
-func nullableColumn(table, columnName string, nullable bool) string {
+func nullableColumn(table *goe.TableMigrate, columnName string, nullable bool) string {
 	if nullable {
-		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP NOT NULL;\n", table, columnName)
+		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP NOT NULL;\n", table.EscapingTableName(), columnName)
 	}
-	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET NOT NULL;\n", table, columnName)
+	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET NOT NULL;\n", table.EscapingTableName(), columnName)
 }

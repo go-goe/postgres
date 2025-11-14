@@ -259,7 +259,7 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]dataType, sql *string
 		if att.AutoIncrement {
 			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, checkTypeAutoIncrement(att.DataType)))
 		} else {
-			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, att.DataType))
+			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL %v,", att.EscapingName, att.DataType, setDefault(att.Default)))
 		}
 	}
 
@@ -444,6 +444,33 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *goe.TableMigrate, d
 				} else {
 					sql.WriteString(alterColumn(table, att.EscapingName, dataType, dataMap))
 				}
+			}
+			if !att.AutoIncrement && column.defaultValue != nil {
+				if att.Default == "" {
+					// drop default
+					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP DEFAULT;",
+						table.EscapingTableName(),
+						att.EscapingName,
+					))
+					continue
+				}
+				if *column.defaultValue != att.Default {
+					// update default
+					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
+						table.EscapingTableName(),
+						att.EscapingName,
+						att.Default,
+					))
+					continue
+				}
+			}
+			if att.Default != "" && column.defaultValue == nil {
+				// create default
+				sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
+					table.EscapingTableName(),
+					att.EscapingName,
+					att.Default,
+				))
 			}
 		}
 	}

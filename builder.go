@@ -87,12 +87,29 @@ func buildSelect(query *model.Query) string {
 
 	writeWhere(query, &builder)
 
-	if query.OrderBy != nil {
+	if len(query.GroupBy) != 0 {
 		builder.WriteByte('\n')
-		if query.OrderBy.Desc {
-			builder.WriteString("ORDER BY" + query.OrderBy.Attribute.Table + "." + query.OrderBy.Attribute.Name + "DESC")
+		gp := query.GroupBy[0]
+		builder.WriteString("GROUP BY" + writeAttributes(gp.Attribute))
+		for _, gp = range query.GroupBy[1:] {
+			builder.WriteString("," + writeAttributes(gp.Attribute))
+		}
+	}
+
+	if len(query.OrderBy) != 0 {
+		builder.WriteByte('\n')
+		ob := query.OrderBy[0]
+		if ob.Desc {
+			builder.WriteString("ORDER BY" + writeAttributes(ob.Attribute) + "DESC")
 		} else {
-			builder.WriteString("ORDER BY" + query.OrderBy.Attribute.Table + "." + query.OrderBy.Attribute.Name + "ASC")
+			builder.WriteString("ORDER BY" + writeAttributes(ob.Attribute) + "ASC")
+		}
+		for _, ob = range query.OrderBy[1:] {
+			if ob.Desc {
+				builder.WriteString("," + writeAttributes(ob.Attribute) + "DESC")
+			} else {
+				builder.WriteString("," + writeAttributes(ob.Attribute) + "ASC")
+			}
 		}
 	}
 
@@ -142,9 +159,9 @@ func buildInsert(query *model.Query) string {
 		builder.WriteByte(')')
 	}
 
-	if query.ReturningId != nil {
+	if query.ReturningID != nil {
 		builder.WriteString("RETURNING")
-		builder.WriteString(query.ReturningId.Name)
+		builder.WriteString(query.ReturningID.Name)
 	}
 
 	return builder.String()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/model"
@@ -15,22 +16,41 @@ import (
 type Driver struct {
 	dns string
 	sql *pgxpool.Pool
-	Config
+	config
 }
 
 func (d *Driver) GetDatabaseConfig() *model.DatabaseConfig {
-	return &d.Config.DatabaseConfig
+	return &d.config.DatabaseConfig
+}
+
+type config struct {
+	model.DatabaseConfig
+	MigratePath string
 }
 
 type Config struct {
-	model.DatabaseConfig
-	MigratePath string // output sql file, if defined the driver will not auto apply the migration
+	Logger           model.Logger
+	IncludeArguments bool          // include all arguments used on query
+	QueryThreshold   time.Duration // query threshold to warning on slow queries
+
+	MigratePath string // output sql file, if defined the driver will not auto apply the migration.
 }
 
-func Open(dns string, config Config) (driver *Driver) {
+func NewConfig(c Config) config {
+	return config{
+		DatabaseConfig: model.DatabaseConfig{
+			Logger:           c.Logger,
+			IncludeArguments: c.IncludeArguments,
+			QueryThreshold:   c.QueryThreshold,
+		},
+		MigratePath: c.MigratePath,
+	}
+}
+
+func Open(dns string, c config) (driver *Driver) {
 	return &Driver{
 		dns:    dns,
-		Config: config,
+		config: c,
 	}
 }
 
@@ -109,11 +129,11 @@ func (dr *Driver) ErrorTranslator() func(err error) error {
 }
 
 func (dr *Driver) NewConnection() model.Connection {
-	return Connection{sql: dr.sql, config: dr.Config}
+	return Connection{sql: dr.sql, config: dr.config}
 }
 
 type Connection struct {
-	config Config
+	config config
 	sql    *pgxpool.Pool
 }
 
@@ -139,11 +159,11 @@ func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
 
 func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (model.Transaction, error) {
 	tx, err := dr.sql.BeginTx(ctx, convertTxOptions(opts))
-	return Transaction{tx: tx, config: dr.Config}, err
+	return Transaction{tx: tx, config: dr.config}, err
 }
 
 type Transaction struct {
-	config Config
+	config config
 	tx     pgx.Tx
 }
 

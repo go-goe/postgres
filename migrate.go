@@ -96,7 +96,7 @@ func getSchemas(conn *pgxpool.Pool) ([]string, error) {
 }
 
 func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any) error {
-	if db.Config.MigratePath == "" {
+	if db.config.MigratePath == "" {
 		query := model.Query{Type: enum.RawQuery, RawSql: rawSql, Arguments: args}
 		query.Header.Err = wrapperExec(ctx, db.NewConnection(), &query)
 		if query.Header.Err != nil {
@@ -105,7 +105,7 @@ func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any
 		db.GetDatabaseConfig().InfoHandler(ctx, query)
 		return nil
 	}
-	root, err := os.OpenRoot(db.Config.MigratePath)
+	root, err := os.OpenRoot(db.config.MigratePath)
 	if err != nil {
 		return err
 	}
@@ -453,7 +453,7 @@ func checkFields(conn *pgxpool.Pool, dbTable dbTable, table *model.TableMigrate,
 					))
 					continue
 				}
-				if *column.defaultValue != att.Default {
+				if !strings.HasPrefix(*column.defaultValue, att.Default) {
 					// update default
 					sql.WriteString(fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET DEFAULT %v;",
 						table.EscapingTableName(),

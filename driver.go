@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/go-goe/goe"
@@ -165,6 +166,7 @@ func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (mode
 type Transaction struct {
 	config config
 	tx     pgx.Tx
+	saves  int64
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (model.Rows, error) {
@@ -201,6 +203,40 @@ func (t Transaction) Rollback() error {
 	if err != nil {
 		// goe can't log
 		return t.config.ErrorHandler(context.TODO(), err)
+	}
+	return nil
+}
+
+type SavePoint struct {
+	name string
+	tx   Transaction
+}
+
+func (t Transaction) SavePoint() (model.SavePoint, error) {
+	t.saves++
+	point := "sp_" + strconv.FormatInt(t.saves, 10)
+	_, err := t.tx.Exec(context.TODO(), "SAVEPOINT "+point)
+	if err != nil {
+		// goe can't log
+		return nil, t.config.ErrorHandler(context.TODO(), err)
+	}
+	return SavePoint{point, t}, nil
+}
+
+func (s SavePoint) Rollback() error {
+	_, err := s.tx.tx.Exec(context.TODO(), "ROLLBACK TO SAVEPOINT "+s.name)
+	if err != nil {
+		// goe can't log
+		return s.tx.config.ErrorHandler(context.TODO(), err)
+	}
+	return nil
+}
+
+func (s SavePoint) Commit() error {
+	_, err := s.tx.tx.Exec(context.TODO(), "RELEASE SAVEPOINT "+s.name)
+	if err != nil {
+		// goe can't log
+		return s.tx.config.ErrorHandler(context.TODO(), err)
 	}
 	return nil
 }

@@ -122,6 +122,11 @@ func buildSelect(query *model.Query) string {
 		builder.WriteString("OFFSET " + strconv.Itoa(query.Offset))
 	}
 
+	if query.ForUpdate {
+		builder.WriteByte('\n')
+		builder.WriteString("FOR UPDATE;")
+	}
+
 	return builder.String()
 }
 

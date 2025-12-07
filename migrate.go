@@ -383,7 +383,10 @@ func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *st
 	for i := range indexes {
 		if dbIndex, exist := dis[indexes[i].Name]; exist {
 			if indexes[i].Unique != dbIndex.unique {
-				sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
+				sql.WriteString(dropIndex(table, indexes[i].EscapingName))
+				sql.WriteString(createIndex(indexes[i], table))
+			} else if indexes[i].Func != "" && indexes[i].Func != dbIndex.attname {
+				sql.WriteString(dropIndex(table, indexes[i].EscapingName))
 				sql.WriteString(createIndex(indexes[i], table))
 			}
 			dbIndex.migrated = true
@@ -397,7 +400,7 @@ func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *st
 			if !slices.ContainsFunc(table.OneToOnes, func(o model.OneToOneMigrate) bool {
 				return o.Name == dbIndex.attname
 			}) {
-				sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", keywordHandler(dbIndex.indexName)) + "\n")
+				sql.WriteString(dropIndex(table, keywordHandler(dbIndex.indexName)))
 			}
 		}
 	}
@@ -415,9 +418,16 @@ func createIndex(index model.IndexMigrate, table *model.TableMigrate) string {
 		index.EscapingName,
 		table.EscapingTableName(),
 		func() string {
-			s := fmt.Sprintf("%v", index.Attributes[0].EscapingName)
+			var s string
+			if index.Func != "" {
+				s += index.Func + "("
+			}
+			s += fmt.Sprintf("%v", index.Attributes[0].EscapingName)
 			for _, a := range index.Attributes[1:] {
 				s += fmt.Sprintf(",%v", a.EscapingName)
+			}
+			if index.Func != "" {
+				s += ")"
 			}
 			return s
 		}(),
@@ -711,4 +721,12 @@ func nullableColumn(table *model.TableMigrate, columnName string, nullable bool)
 		return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v DROP NOT NULL;\n", table.EscapingTableName(), columnName)
 	}
 	return fmt.Sprintf("ALTER TABLE %v ALTER COLUMN %v SET NOT NULL;\n", table.EscapingTableName(), columnName)
+}
+
+func dropIndex(table *model.TableMigrate, idxName string) string {
+	if table.Schema != nil {
+		return fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+idxName) + "\n"
+	}
+	return fmt.Sprintf("DROP INDEX IF EXISTS %v;", idxName) + "\n"
+
 }

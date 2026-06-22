@@ -85,7 +85,11 @@ func buildSelect(query *model.Query) string {
 		)
 	}
 
-	writeWhere(query, &builder)
+	if query.Where != nil {
+		builder.WriteByte('\n')
+		builder.WriteString("WHERE")
+		writeWhere(query, query.Where, &builder)
+	}
 
 	if len(query.GroupBy) != 0 {
 		builder.WriteByte('\n')
@@ -186,7 +190,11 @@ func buildUpdate(query *model.Query) string {
 		builder.WriteString("," + att.Name + "=$" + strconv.Itoa(i))
 	}
 
-	writeWhere(query, &builder)
+	if query.Where.Type != 0 {
+		builder.WriteByte('\n')
+		builder.WriteString("WHERE")
+		writeWhere(query, query.Where, &builder)
+	}
 
 	return builder.String()
 }
@@ -196,7 +204,11 @@ func buildDelete(query *model.Query) string {
 
 	builder.WriteString("DELETE FROM")
 	builder.WriteString(query.Tables[0].String())
-	writeWhere(query, &builder)
+	if query.Where.Type != 0 {
+		builder.WriteByte('\n')
+		builder.WriteString("WHERE")
+		writeWhere(query, query.Where, &builder)
+	}
 
 	return builder.String()
 }
@@ -213,37 +225,34 @@ func writeAttributes(a model.Attribute) string {
 	return a.Table + "." + a.Name
 }
 
-func writeWhere(query *model.Query, builder *strings.Builder) {
-	if query.WhereOperations != nil {
-		builder.WriteByte('\n')
-		builder.WriteString("WHERE")
-
-		for _, w := range query.WhereOperations {
-			switch w.Type {
-			case enum.OperationWhere:
-				builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " $" + strconv.Itoa(query.WhereIndex))
-				query.WhereIndex++
-			case enum.OperationIsWhere:
-				builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " NULL")
-			case enum.OperationAttributeWhere:
-				builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " " + writeAttributes(w.AttributeValue))
-			case enum.OperationInWhere:
-				if w.QueryIn != nil {
-					if w.QueryIn.Arguments != nil {
-						w.QueryIn.WhereIndex = query.WhereIndex
-						query.Arguments = append(query.Arguments[:w.QueryIn.WhereIndex-1], append(w.QueryIn.Arguments, query.Arguments[w.QueryIn.WhereIndex-1:]...)...)
-						builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn) + ")")
-						query.WhereIndex = w.QueryIn.WhereIndex
-						continue
-					}
-					builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn) + ")")
-					continue
-				}
-				writeWhereInArgument(&w, builder, query)
-			case enum.LogicalWhere:
-				builder.WriteString(" " + operators[w.Operator] + " ")
+func writeWhere(query *model.Query, filter *model.Where, builder *strings.Builder) {
+	switch filter.Type {
+	case enum.OperationWhere:
+		builder.WriteString(writeAttributes(filter.Attribute) + " " + operators[filter.Operator] + " $" + strconv.Itoa(query.WhereIndex))
+		query.WhereIndex++
+	case enum.OperationIsWhere:
+		builder.WriteString(writeAttributes(filter.Attribute) + " " + operators[filter.Operator] + " NULL")
+	case enum.OperationAttributeWhere:
+		builder.WriteString(writeAttributes(filter.Attribute) + " " + operators[filter.Operator] + " " + writeAttributes(filter.AttributeValue))
+	case enum.OperationInWhere:
+		if filter.QueryIn != nil {
+			if filter.QueryIn.Arguments != nil {
+				filter.QueryIn.WhereIndex = query.WhereIndex
+				query.Arguments = append(query.Arguments[:filter.QueryIn.WhereIndex-1], append(filter.QueryIn.Arguments, query.Arguments[filter.QueryIn.WhereIndex-1:]...)...)
+				builder.WriteString(writeAttributes(filter.Attribute) + " " + operators[filter.Operator] + " (" + buildSelect(filter.QueryIn) + ")")
+				query.WhereIndex = filter.QueryIn.WhereIndex
+				return
 			}
+			builder.WriteString(writeAttributes(filter.Attribute) + " " + operators[filter.Operator] + " (" + buildSelect(filter.QueryIn) + ")")
+			return
 		}
+		writeWhereInArgument(filter, builder, query)
+	case enum.LogicalWhere:
+		builder.WriteByte('(')
+		writeWhere(query, filter.FirstOperation, builder)
+		builder.WriteString(" " + operators[filter.Operator] + " ")
+		writeWhere(query, filter.SecondOperation, builder)
+		builder.WriteByte(')')
 	}
 }
 

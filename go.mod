@@ -3,7 +3,7 @@ module github.com/go-goe/postgres
 go 1.24.0
 
 require (
-	github.com/go-goe/goe v0.7.1
+	github.com/go-goe/goe v0.7.2
 	github.com/jackc/pgx/v5 v5.7.6
 )
 
